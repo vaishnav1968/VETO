@@ -29,6 +29,7 @@
  *   HEARTBEAT                    Periodic keepalive
  */
 
+#define SSD1306_NO_SPLASH
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -292,7 +293,13 @@ void setup() {
 
   // Initialize I2C OLED
   Wire.begin();
-  if (display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+  bool oledReady = display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
+  if (!oledReady) {
+    // Fallback to secondary SSD1306 I2C address (0x3D) if 0x3C does not respond
+    oledReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+  }
+
+  if (oledReady) {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
