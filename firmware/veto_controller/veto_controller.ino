@@ -11,27 +11,6 @@
  *     Red:   Pin 9  (PWM)
  *     Green: Pin 10 (PWM)
  *     Blue:  Pin 11 (PWM)
- * 
- * Serial Protocol (115200 Baud):
- * Host -> Arduino:
- *   STATUS:<text>                     Update idle display status text
- *   MSG:<line1>[:<line2>[:<line3>]]   Display custom message on OLED
- *   PENDING:<id>:<op>:<target>[:<why>] New operation pending review
- *   DECISION:<id>:<state>             Result of review (APPROVED / REJECTED)
- *   PING:<nonce>                      Heartbeat request from host
- *   ESTOP_RESET                       Reset emergency stop lock
- *   SCAN                              Perform live I2C bus scan
- * 
- * Arduino -> Host:
- *   READY                             Device booted and ready
- *   I2C:FOUND:<addr>                  I2C peripheral detected
- *   I2C:NONE_FOUND                    No I2C device responded
- *   OLED:READY:<addr>                 OLED initialized successfully
- *   APPROVE:<id>                      Approve button pressed
- *   REJECT:<id>                       Reject button pressed
- *   ESTOP                             Emergency stop button pressed / open
- *   PONG:<nonce>                      Heartbeat response to host
- *   HEARTBEAT                         Periodic keepalive
  */
 
 #define SSD1306_NO_SPLASH
@@ -42,18 +21,17 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
-#define DEFAULT_SCREEN_ADDRESS 0x3C
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Pin Definitions
-const int PIN_BTN_APPROVE = 2;
-const int PIN_BTN_REJECT  = 3;
-const int PIN_BTN_ESTOP   = 4;
+const uint8_t PIN_BTN_APPROVE = 2;
+const uint8_t PIN_BTN_REJECT  = 3;
+const uint8_t PIN_BTN_ESTOP   = 4;
 
-const int PIN_LED_RED   = 9;
-const int PIN_LED_GREEN = 10;
-const int PIN_LED_BLUE  = 11;
+const uint8_t PIN_LED_RED   = 9;
+const uint8_t PIN_LED_GREEN = 10;
+const uint8_t PIN_LED_BLUE  = 11;
 
 // Debounce timing
 const unsigned long DEBOUNCE_DELAY_MS = 50;
@@ -61,13 +39,13 @@ unsigned long lastDebounceTimeApprove = 0;
 unsigned long lastDebounceTimeReject  = 0;
 unsigned long lastDebounceTimeEstop   = 0;
 
-int lastBtnStateApprove = HIGH;
-int lastBtnStateReject  = HIGH;
-int lastBtnStateEstop   = HIGH;
+uint8_t lastBtnStateApprove = HIGH;
+uint8_t lastBtnStateReject  = HIGH;
+uint8_t lastBtnStateEstop   = HIGH;
 
-int btnStateApprove = HIGH;
-int btnStateReject  = HIGH;
-int btnStateEstop   = HIGH;
+uint8_t btnStateApprove = HIGH;
+uint8_t btnStateReject  = HIGH;
+uint8_t btnStateEstop   = HIGH;
 
 // System States
 enum SystemState {
@@ -80,24 +58,32 @@ enum SystemState {
 
 SystemState currentState = STATE_NORMAL;
 
-// Pending Operation Details
-char currentApprovalId[16] = "";
-char currentOperation[16]  = "";
-char currentTarget[24]     = "";
-char currentReason[24]     = "REVIEW REQUIRED";
-char systemStatusText[32]  = "SYSTEM NOMINAL";
-char lastDecisionText[16]  = "";
+// Compact buffers to preserve SRAM for 1024-byte OLED frame
+char currentApprovalId[12] = "";
+char currentOperation[12]  = "";
+char currentTarget[16]     = "";
+char currentReason[16]     = "REVIEW REQUIRED";
+char systemStatusText[16]  = "SYSTEM NOMINAL";
+char lastDecisionText[10]  = "";
 
-// Custom Message Display
-char customMsgLine1[22] = "VETO SECURITY";
-char customMsgLine2[22] = "OLED ACTIVE";
-char customMsgLine3[22] = "";
+char customMsgLine1[18] = "VETO SECURITY";
+char customMsgLine2[18] = "OLED ACTIVE";
+char customMsgLine3[18] = "";
 unsigned long customMsgTimer = 0;
 
 unsigned long feedbackTimer = 0;
 unsigned long lastHeartbeatSend = 0;
-unsigned long lastOledRetry = 0;
 bool oledHardwareReady = false;
+
+// Fixed serial rx buffer (no heap String allocations)
+char serialRxBuf[64];
+uint8_t serialRxIdx = 0;
+
+int getFreeRam() {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}
 
 void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(PIN_LED_RED, r);
@@ -105,30 +91,8 @@ void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(PIN_LED_BLUE, b);
 }
 
-bool ensureOLEDReady() {
-  if (oledHardwareReady) return true;
-  delay(20);
-  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    oledHardwareReady = true;
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(0xFF);
-    display.dim(false);
-    Serial.println(F("OLED:ATTACHED:0x3C"));
-    return true;
-  }
-  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3D)) {
-    oledHardwareReady = true;
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(0xFF);
-    display.dim(false);
-    Serial.println(F("OLED:ATTACHED:0x3D"));
-    return true;
-  }
-  return false;
-}
-
 void updateOLED() {
-  if (!oledHardwareReady && !ensureOLEDReady()) return;
+  if (!oledHardwareReady) return;
 
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -186,7 +150,6 @@ void updateOLED() {
       display.print(F("REJECTED"));
     }
 
-    // Normal info text below banner
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
     display.setCursor(0, 42);
@@ -253,68 +216,105 @@ void runI2CScan() {
   }
 }
 
-void processIncomingCommand(String cmd) {
-  cmd.trim();
-  if (cmd.length() == 0) return;
+void processIncomingCommand(char* cmd) {
+  if (cmd[0] == '\0') return;
 
-  if (cmd.startsWith("STATUS:")) {
-    String txt = cmd.substring(7);
-    txt.toCharArray(systemStatusText, sizeof(systemStatusText));
+  if (strncmp(cmd, "STATUS:", 7) == 0) {
+    strncpy(systemStatusText, cmd + 7, sizeof(systemStatusText) - 1);
+    systemStatusText[sizeof(systemStatusText) - 1] = '\0';
     if (currentState == STATE_NORMAL) updateOLED();
   }
-  else if (cmd.startsWith("MSG:")) {
-    // Format: MSG:<line1>[:<line2>[:<line3>]]
-    int idx1 = cmd.indexOf(':', 4);
-    int idx2 = (idx1 > 0) ? cmd.indexOf(':', idx1 + 1) : -1;
+  else if (strncmp(cmd, "MSG:", 4) == 0) {
+    char* p1 = cmd + 4;
+    char* p2 = strchr(p1, ':');
+    char* p3 = NULL;
 
-    String l1 = (idx1 > 0) ? cmd.substring(4, idx1) : cmd.substring(4);
-    String l2 = (idx1 > 0) ? ((idx2 > 0) ? cmd.substring(idx1 + 1, idx2) : cmd.substring(idx1 + 1)) : "";
-    String l3 = (idx2 > 0) ? cmd.substring(idx2 + 1) : "";
+    if (p2) {
+      *p2 = '\0';
+      p2++;
+      p3 = strchr(p2, ':');
+      if (p3) {
+        *p3 = '\0';
+        p3++;
+      }
+    }
 
-    l1.toCharArray(customMsgLine1, sizeof(customMsgLine1));
-    l2.toCharArray(customMsgLine2, sizeof(customMsgLine2));
-    l3.toCharArray(customMsgLine3, sizeof(customMsgLine3));
+    strncpy(customMsgLine1, p1, sizeof(customMsgLine1) - 1);
+    customMsgLine1[sizeof(customMsgLine1) - 1] = '\0';
+
+    if (p2) {
+      strncpy(customMsgLine2, p2, sizeof(customMsgLine2) - 1);
+      customMsgLine2[sizeof(customMsgLine2) - 1] = '\0';
+    } else {
+      customMsgLine2[0] = '\0';
+    }
+
+    if (p3) {
+      strncpy(customMsgLine3, p3, sizeof(customMsgLine3) - 1);
+      customMsgLine3[sizeof(customMsgLine3) - 1] = '\0';
+    } else {
+      customMsgLine3[0] = '\0';
+    }
 
     currentState = STATE_CUSTOM_MESSAGE;
     customMsgTimer = millis();
     updateOLED();
     Serial.println(F("MSG:OK"));
   }
-  else if (cmd.startsWith("PENDING:")) {
-    // Format: PENDING:<id>:<operation>:<target>[:<reason>]
-    int idx1 = cmd.indexOf(':', 8);
-    int idx2 = cmd.indexOf(':', idx1 + 1);
-    int idx3 = cmd.indexOf(':', idx2 + 1);
+  else if (strncmp(cmd, "PENDING:", 8) == 0) {
+    char* id = cmd + 8;
+    char* op = strchr(id, ':');
+    char* tgt = NULL;
+    char* why = NULL;
 
-    if (idx1 > 0 && idx2 > 0) {
-      String id = cmd.substring(8, idx1);
-      String op = cmd.substring(idx1 + 1, idx2);
-      String tgt = (idx3 > 0) ? cmd.substring(idx2 + 1, idx3) : cmd.substring(idx2 + 1);
-      String why = (idx3 > 0) ? cmd.substring(idx3 + 1) : "REVIEW REQUIRED";
+    if (op) {
+      *op = '\0';
+      op++;
+      tgt = strchr(op, ':');
+      if (tgt) {
+        *tgt = '\0';
+        tgt++;
+        why = strchr(tgt, ':');
+        if (why) {
+          *why = '\0';
+          why++;
+        }
+      }
+    }
 
-      id.toCharArray(currentApprovalId, sizeof(currentApprovalId));
-      op.toCharArray(currentOperation, sizeof(currentOperation));
-      tgt.toCharArray(currentTarget, sizeof(currentTarget));
-      why.toCharArray(currentReason, sizeof(currentReason));
+    if (op && tgt) {
+      strncpy(currentApprovalId, id, sizeof(currentApprovalId) - 1);
+      strncpy(currentOperation, op, sizeof(currentOperation) - 1);
+      strncpy(currentTarget, tgt, sizeof(currentTarget) - 1);
+      if (why) {
+        strncpy(currentReason, why, sizeof(currentReason) - 1);
+      } else {
+        strncpy(currentReason, "REVIEW REQUIRED", sizeof(currentReason) - 1);
+      }
+
+      currentApprovalId[sizeof(currentApprovalId) - 1] = '\0';
+      currentOperation[sizeof(currentOperation) - 1] = '\0';
+      currentTarget[sizeof(currentTarget) - 1] = '\0';
+      currentReason[sizeof(currentReason) - 1] = '\0';
 
       currentState = STATE_PENDING_APPROVAL;
-      // Yellow LED for pending review
-      setLEDColor(255, 180, 0);
+      setLEDColor(255, 180, 0); // Yellow
       updateOLED();
     }
   }
-  else if (cmd.startsWith("DECISION:")) {
-    // Format: DECISION:<id>:<decision>
-    int idx = cmd.indexOf(':', 9);
-    if (idx > 0) {
-      String id = cmd.substring(9, idx);
-      String dec = cmd.substring(idx + 1);
+  else if (strncmp(cmd, "DECISION:", 9) == 0) {
+    char* id = cmd + 9;
+    char* dec = strchr(id, ':');
+    if (dec) {
+      *dec = '\0';
+      dec++;
+      strncpy(lastDecisionText, dec, sizeof(lastDecisionText) - 1);
+      lastDecisionText[sizeof(lastDecisionText) - 1] = '\0';
 
-      dec.toCharArray(lastDecisionText, sizeof(lastDecisionText));
       currentState = STATE_DECISION_FEEDBACK;
       feedbackTimer = millis();
 
-      if (dec == "APPROVED") {
+      if (strcmp(dec, "APPROVED") == 0) {
         setLEDColor(0, 255, 0); // Solid Green
       } else {
         setLEDColor(255, 0, 0); // Solid Red
@@ -322,17 +322,16 @@ void processIncomingCommand(String cmd) {
       updateOLED();
     }
   }
-  else if (cmd.startsWith("PING:")) {
-    String nonce = cmd.substring(5);
+  else if (strncmp(cmd, "PING:", 5) == 0) {
     Serial.print(F("PONG:"));
-    Serial.println(nonce);
+    Serial.println(cmd + 5);
   }
-  else if (cmd == "ESTOP_RESET") {
+  else if (strcmp(cmd, "ESTOP_RESET") == 0) {
     currentState = STATE_NORMAL;
     setLEDColor(0, 255, 0);
     updateOLED();
   }
-  else if (cmd == "SCAN") {
+  else if (strcmp(cmd, "SCAN") == 0) {
     runI2CScan();
   }
 }
@@ -341,7 +340,7 @@ void checkButtons() {
   unsigned long now = millis();
 
   // 1. APPROVE Button
-  int readingApprove = digitalRead(PIN_BTN_APPROVE);
+  uint8_t readingApprove = digitalRead(PIN_BTN_APPROVE);
   if (readingApprove != lastBtnStateApprove) {
     lastDebounceTimeApprove = now;
   }
@@ -349,7 +348,7 @@ void checkButtons() {
     if (readingApprove != btnStateApprove) {
       btnStateApprove = readingApprove;
       if (btnStateApprove == LOW && currentState == STATE_PENDING_APPROVAL) {
-        strncpy(lastDecisionText, "APPROVED", sizeof(lastDecisionText));
+        strncpy(lastDecisionText, "APPROVED", sizeof(lastDecisionText) - 1);
         currentState = STATE_DECISION_FEEDBACK;
         feedbackTimer = millis();
         setLEDColor(0, 255, 0); // Solid Green
@@ -362,7 +361,7 @@ void checkButtons() {
   lastBtnStateApprove = readingApprove;
 
   // 2. REJECT Button
-  int readingReject = digitalRead(PIN_BTN_REJECT);
+  uint8_t readingReject = digitalRead(PIN_BTN_REJECT);
   if (readingReject != lastBtnStateReject) {
     lastDebounceTimeReject = now;
   }
@@ -370,7 +369,7 @@ void checkButtons() {
     if (readingReject != btnStateReject) {
       btnStateReject = readingReject;
       if (btnStateReject == LOW && currentState == STATE_PENDING_APPROVAL) {
-        strncpy(lastDecisionText, "REJECTED", sizeof(lastDecisionText));
+        strncpy(lastDecisionText, "REJECTED", sizeof(lastDecisionText) - 1);
         currentState = STATE_DECISION_FEEDBACK;
         feedbackTimer = millis();
         setLEDColor(255, 0, 0); // Solid Red
@@ -383,7 +382,7 @@ void checkButtons() {
   lastBtnStateReject = readingReject;
 
   // 3. EMERGENCY STOP Button
-  int readingEstop = digitalRead(PIN_BTN_ESTOP);
+  uint8_t readingEstop = digitalRead(PIN_BTN_ESTOP);
   if (readingEstop != lastBtnStateEstop) {
     lastDebounceTimeEstop = now;
   }
@@ -402,12 +401,9 @@ void checkButtons() {
 }
 
 void setup() {
-  // Initialize Serial
   Serial.begin(115200);
-  Serial.setTimeout(50); // Fast non-blocking serial timeout
-  while (!Serial && millis() < 1000);
+  while (!Serial && millis() < 500);
 
-  // Pin Modes
   pinMode(PIN_BTN_APPROVE, INPUT_PULLUP);
   pinMode(PIN_BTN_REJECT,  INPUT_PULLUP);
   pinMode(PIN_BTN_ESTOP,   INPUT_PULLUP);
@@ -416,84 +412,67 @@ void setup() {
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_BLUE,  OUTPUT);
 
-  // Initial Green
   setLEDColor(0, 255, 0);
 
-  // Initialize I2C Bus
+  Serial.print(F("FREE_RAM_START:"));
+  Serial.println(getFreeRam());
+
   Wire.begin();
-  Wire.setClock(100000); // 100kHz standard I2C speed for maximum cable noise tolerance
-  delay(500); // Give OLED power-on reset capacitor time to charge
+  Wire.setClock(100000);
+  delay(300); // Allow OLED internal charge pump capacitors to reach operating voltage
 
-  // Auto-detect OLED I2C Address
-  uint8_t detectedAddr = 0;
-  for (uint8_t addr = 0x3C; addr <= 0x3D; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      detectedAddr = addr;
-      break;
-    }
-  }
-  if (detectedAddr == 0) {
-    // Scan all valid I2C addresses
-    for (uint8_t addr = 1; addr < 127; addr++) {
-      Wire.beginTransmission(addr);
-      if (Wire.endTransmission() == 0) {
-        detectedAddr = addr;
-        break;
-      }
-    }
-  }
-
-  uint8_t finalAddr = (detectedAddr != 0) ? detectedAddr : DEFAULT_SCREEN_ADDRESS;
-
-  // Initialize Adafruit SSD1306 Display
-  oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, finalAddr);
-  if (!oledHardwareReady && finalAddr != 0x3D) {
+  // Initialize display immediately to lock contiguous 1024-byte RAM buffer
+  oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (!oledHardwareReady) {
     oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
-    if (oledHardwareReady) finalAddr = 0x3D;
   }
+
+  Serial.print(F("FREE_RAM_POST_OLED:"));
+  Serial.println(getFreeRam());
 
   if (oledHardwareReady) {
-    // Maximize display contrast
+    Serial.println(F("OLED:INIT_SUCCESS"));
     display.ssd1306_command(SSD1306_SETCONTRAST);
     display.ssd1306_command(0xFF);
     display.dim(false);
 
-    Serial.print(F("OLED:READY:0x"));
-    if (finalAddr < 16) Serial.print(F("0"));
-    Serial.println(finalAddr, HEX);
-
-    // Initial Splash Screen
     display.clearDisplay();
-    display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(12, 16);
-    display.println(F("VETO RUNTIME GUARD"));
-    display.setCursor(10, 30);
+    display.setTextSize(2);
+    display.setCursor(4, 10);
+    display.println(F("VETO GUARD"));
+    display.setTextSize(1);
+    display.setCursor(8, 34);
     display.println(F("OLED DISPLAY ONLINE"));
-    display.setCursor(14, 44);
+    display.setCursor(14, 48);
     display.println(F("ZERO-TRUST ACTIVE"));
     display.display();
-    delay(800);
+    delay(1000);
   } else {
-    Serial.println(F("OLED:NOT_DETECTED:CHECK_SDA_SCL"));
+    Serial.println(F("OLED:INIT_FAILED:CHECK_RAM_OR_WIRING"));
   }
 
   currentState = STATE_NORMAL;
   updateOLED();
 
-  // Announce ready to host
   Serial.println(F("READY"));
 }
 
 void loop() {
-  // Check buttons
   checkButtons();
 
-  // Handle serial input from host
-  if (Serial.available() > 0) {
-    String incoming = Serial.readStringUntil('\n');
-    processIncomingCommand(incoming);
+  // Fast non-blocking serial reading into fixed buffer
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialRxIdx > 0) {
+        serialRxBuf[serialRxIdx] = '\0';
+        processIncomingCommand(serialRxBuf);
+        serialRxIdx = 0;
+      }
+    } else if (serialRxIdx < sizeof(serialRxBuf) - 1) {
+      serialRxBuf[serialRxIdx++] = c;
+    }
   }
 
   // Handle feedback display timeout (return to normal state after 3.5s)
@@ -505,9 +484,9 @@ void loop() {
     }
   }
 
-  // Handle custom message display timeout (return to normal after 10s)
+  // Handle custom message display timeout (return to normal after 15s)
   if (currentState == STATE_CUSTOM_MESSAGE) {
-    if (millis() - customMsgTimer > 10000) {
+    if (millis() - customMsgTimer > 15000) {
       currentState = STATE_NORMAL;
       updateOLED();
     }
@@ -517,13 +496,5 @@ void loop() {
   if (millis() - lastHeartbeatSend > 3000) {
     lastHeartbeatSend = millis();
     Serial.println(F("HEARTBEAT"));
-  }
-
-  // Auto-retry OLED initialization if not yet attached
-  if (!oledHardwareReady && (millis() - lastOledRetry > 2000)) {
-    lastOledRetry = millis();
-    if (ensureOLEDReady()) {
-      updateOLED();
-    }
   }
 }
