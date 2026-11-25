@@ -1,31 +1,40 @@
+import json
+
 class ArduinoProtocol:
     """
     Message protocol specification for Arduino Uno R3 communication.
     
-    Host -> Arduino:
-      STATUS:<text>                (e.g., STATUS:SYSTEM NORMAL)
-      PENDING:<id>:<op>:<target>   (e.g., PENDING:APR-9812:DELETE:system_config.json)
-      DECISION:<id>:<decision>     (e.g., DECISION:APR-9812:APPROVED)
-      VETO:<reason>:<target>       (e.g., VETO:HONEYTOKEN:.env.decoy)
-      DEMO:<title>:<step>          (e.g., DEMO:SCENARIO 1:HONEYTOKEN EXFIL)
-      MSG:<l1>:<l2>:<l3>           (e.g., MSG:TITLE:SUBTITLE:STATUS)
-      PING:<nonce>                 (Heartbeat keepalive query)
-      ESTOP_RESET                  (Clears emergency-stop state on Arduino)
-      SCAN                         (Run I2C diagnostic scan on Arduino bus)
+    Supports both newline-delimited JSON commands/events and legacy text tokens.
     
-    Arduino -> Host:
-      READY                        (Sent when Arduino boots or resets)
-      APPROVE:<id>                 (Physical APPROVE button pressed for active ID)
-      REJECT:<id>                  (Physical REJECT button pressed for active ID)
-      ESTOP                        (Physical EMERGENCY-STOP button triggered)
-      PONG:<nonce>                 (Heartbeat keepalive response)
-      HEARTBEAT                    (Periodic status ping from Arduino)
-      VETO:ACK                     (Veto alert received and displayed on OLED)
-      DEMO:ACK                     (Demo scenario alert received and displayed on OLED)
-      MSG:OK                       (Custom message acknowledged)
-      I2C:FOUND:<addr>             (I2C diagnostic scan result)
-      OLED:INIT_SUCCESS            (OLED initialized successfully)
+    Host -> Arduino (JSON):
+      {"type":"REQUEST","id":"<req_id>","agent":"<agent_name>","action":"<action>","risk":"HIGH"}
+      {"type":"STATUS","state":"IDLE"|"BLOCKED"|"APPROVED"}
+      {"type":"RESET"}
+    
+    Arduino -> Host (JSON):
+      {"type":"HEARTBEAT","status":"ARMED"|"HALTED"}
+      {"type":"DECISION","id":"<req_id>","decision":"APPROVE"|"REJECT"}
+      {"type":"EMERGENCY_STOP","reason":"HARDWARE_KILL_SWITCH"}
     """
+
+    @staticmethod
+    def format_json_request(approval_id: str, agent: str, action: str, risk: str = "HIGH") -> str:
+        clean_action = action.split("/")[-1][:20]
+        return json.dumps({
+            "type": "REQUEST",
+            "id": approval_id[:14],
+            "agent": agent[:14],
+            "action": clean_action,
+            "risk": risk[:8]
+        }) + "\n"
+
+    @staticmethod
+    def format_json_status(state: str) -> str:
+        return json.dumps({"type": "STATUS", "state": state.upper()}) + "\n"
+
+    @staticmethod
+    def format_json_reset() -> str:
+        return json.dumps({"type": "RESET"}) + "\n"
 
     @staticmethod
     def format_status(status_text: str) -> str:
@@ -33,11 +42,17 @@ class ArduinoProtocol:
 
     @staticmethod
     def format_pending(approval_id: str, operation: str, target: str, reason: str = "") -> str:
-        # Arduino OLED line width is limited (approx 16-20 chars)
         clean_op = operation[:8].upper()
         clean_target = target.split("/")[-1][:12]
         clean_why = reason[:16].upper() if reason else "REVIEW_REQ"
-        return f"PENDING:{approval_id}:{clean_op}:{clean_target}:{clean_why}\n"
+        # Also sends newline-delimited JSON request format for JSON firmware
+        return json.dumps({
+            "type": "REQUEST",
+            "id": approval_id[:14],
+            "agent": clean_op,
+            "action": clean_target,
+            "risk": clean_why[:8]
+        }) + "\n"
 
     @staticmethod
     def format_decision(approval_id: str, decision: str) -> str:
@@ -72,6 +87,28 @@ class ArduinoProtocol:
         if not line:
             return None, None
 
+        # 1. Newline-delimited JSON messages
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                mtype = data.get("type", "").upper()
+                if mtype == "HEARTBEAT":
+                    return "HEARTBEAT", {"status": data.get("status", "ARMED")}
+                elif mtype == "EMERGENCY_STOP":
+                    return "ESTOP", {"reason": data.get("reason", "HARDWARE_KILL_SWITCH")}
+                elif mtype == "DECISION":
+                    decision = data.get("decision", "").upper()
+                    if decision == "APPROVE":
+                        return "APPROVE", {"approval_id": data.get("id")}
+                    elif decision == "REJECT":
+                        return "REJECT", {"approval_id": data.get("id")}
+                elif mtype == "PONG":
+                    return "PONG", {"nonce": data.get("nonce")}
+                return mtype, data
+            except Exception:
+                pass
+
+        # 2. Legacy token messages
         if line == "READY":
             return "READY", {}
         elif line == "ESTOP":
