@@ -31,6 +31,9 @@ export interface ApprovalRequest {
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
   resolved_by?: string;
   resolved_at?: string;
+  risk_rationale?: string;
+  potential_impact?: string;
+  policy_rule?: string;
 }
 
 export interface ThreatIncident {
@@ -124,5 +127,6 @@ export interface DemoResult {
   outcome: string;
   enforcement_successful: boolean;
   message?: string;
+  why_human_action_required?: string;
   steps: DemoStep[];
 }

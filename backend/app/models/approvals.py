@@ -15,6 +15,9 @@ class ApprovalRequest(BaseModel):
     status: str = "PENDING"  # PENDING, APPROVED, REJECTED, EXPIRED, CANCELLED
     resolved_by: Optional[str] = None  # ARDUINO, DASHBOARD, SYSTEM_TIMEOUT, EMERGENCY_STOP
     resolved_at: Optional[datetime] = None
+    risk_rationale: str = "Human authorization required for sensitive operation."
+    potential_impact: str = "Potential modification or loss of protected resources."
+    policy_rule: str = "RULE-REVIEW"
 
 class ApprovalDecisionRequest(BaseModel):
     decision: str  # APPROVED, REJECTED

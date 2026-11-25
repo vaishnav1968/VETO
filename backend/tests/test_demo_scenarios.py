@@ -68,7 +68,25 @@ async def test_all_three_demo_scenarios(tmp_path, monkeypatch):
     assert demo3_res["file_intact"] is True
     assert "REJECTED" in demo3_res["outcome"]
 
-    # 4. Verify Audit Chain across all recorded demo events
+    # 4. Run Demo 4 (Config Overwrite with simulated rejection)
+    demo4_res = await runner.run_scenario_4(auto_simulate_rejection=True)
+    assert demo4_res["enforcement_successful"] is True
+    assert "REJECTED" in demo4_res["outcome"]
+    assert "why_human_action_required" in demo4_res
+
+    # 5. Run Demo 5 (Arbitrary Shell Command with simulated rejection)
+    demo5_res = await runner.run_scenario_5(auto_simulate_rejection=True)
+    assert demo5_res["enforcement_successful"] is True
+    assert "REJECTED" in demo5_res["outcome"]
+    assert "why_human_action_required" in demo5_res
+
+    # 6. Run Demo 6 (Sandbox Escape Traversal)
+    demo6_res = await runner.run_scenario_6()
+    assert demo6_res["enforcement_successful"] is True
+    assert "SANDBOX BOUNDARY VIOLATION" in demo6_res["outcome"]
+    assert "why_human_action_required" in demo6_res
+
+    # 7. Verify Audit Chain across all recorded demo events
     chain_check = await audit_logger.verify_chain()
     assert chain_check["valid"] is True
     assert chain_check["total_events"] > 0

@@ -165,6 +165,27 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 <Play size={12} />
                 <span>Demo 3: Physical Approval / Reject</span>
               </button>
+              <button
+                onClick={() => onTriggerDemo('config-overwrite')}
+                className="px-3 py-1.5 bg-[#1f190e] border border-amber-800/80 text-amber-300 hover:bg-amber-950 text-xs font-mono flex items-center space-x-1.5 transition-colors"
+              >
+                <Play size={12} />
+                <span>Demo 4: Config Overwrite</span>
+              </button>
+              <button
+                onClick={() => onTriggerDemo('shell-execution')}
+                className="px-3 py-1.5 bg-[#1f190e] border border-amber-800/80 text-amber-300 hover:bg-amber-950 text-xs font-mono flex items-center space-x-1.5 transition-colors"
+              >
+                <Play size={12} />
+                <span>Demo 5: Shell Exec Gate</span>
+              </button>
+              <button
+                onClick={() => onTriggerDemo('sandbox-escape')}
+                className="px-3 py-1.5 bg-[#211114] border border-red-800/80 text-red-300 hover:bg-red-950 text-xs font-mono flex items-center space-x-1.5 transition-colors"
+              >
+                <Play size={12} />
+                <span>Demo 6: Sandbox Escape</span>
+              </button>
             </div>
           </div>
         </div>

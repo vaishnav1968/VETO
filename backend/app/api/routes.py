@@ -304,12 +304,18 @@ async def get_hardware_status():
 @router.post("/demo/{scenario}/run")
 async def run_demo_scenario(scenario: str, simulate_rejection: bool = True):
     runner = get_demo_runner()
-    if scenario == "prompt-injection" or scenario == "1":
+    if scenario in ("prompt-injection", "1"):
         res = await runner.run_scenario_1()
-    elif scenario == "mcp-tampering" or scenario == "2":
+    elif scenario in ("mcp-tampering", "2"):
         res = await runner.run_scenario_2()
-    elif scenario == "physical-approval" or scenario == "3":
+    elif scenario in ("physical-approval", "3"):
         res = await runner.run_scenario_3(auto_simulate_rejection=simulate_rejection)
+    elif scenario in ("config-overwrite", "4"):
+        res = await runner.run_scenario_4(auto_simulate_rejection=simulate_rejection)
+    elif scenario in ("shell-execution", "5"):
+        res = await runner.run_scenario_5(auto_simulate_rejection=simulate_rejection)
+    elif scenario in ("sandbox-escape", "6"):
+        res = await runner.run_scenario_6()
     else:
         raise HTTPException(status_code=404, detail="Unknown demonstration scenario")
     

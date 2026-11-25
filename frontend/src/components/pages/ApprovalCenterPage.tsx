@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, XCircle, Clock, Cpu } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Cpu, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { ApprovalRequest } from '../../types';
 import { api } from '../../services/api';
 
@@ -97,6 +97,37 @@ export const ApprovalCenterPage: React.FC<ApprovalCenterPageProps> = ({ approval
                     <span className="text-[10px] text-neutral-500 uppercase block">Target Resource</span>
                     <div className="p-2 bg-[#0a0d0c] border border-[#1e2923] text-neutral-200 break-all">
                       {req.target_resource}
+                    </div>
+                  </div>
+
+                  {/* Why VETO Paused Execution / Threat Analysis */}
+                  <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-2 rounded-sm">
+                    <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                      <ShieldAlert size={14} />
+                      <span>Why VETO Paused Execution</span>
+                    </div>
+
+                    <div className="space-y-1 text-[11px]">
+                      <div>
+                        <span className="text-amber-500 font-semibold">Threat Analysis: </span>
+                        <span className="text-neutral-200">
+                          {req.risk_rationale || req.parameters?._veto_meta?.risk_rationale || "High-risk operation requires human authorization before execution."}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-amber-500 font-semibold">Potential Impact: </span>
+                        <span className="text-neutral-300">
+                          {req.potential_impact || req.parameters?._veto_meta?.potential_impact || "Potential modification or loss of sensitive environment resources."}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-amber-900/40 text-[10px]">
+                        <span className="text-neutral-400">
+                          Triggered Rule: <code className="text-amber-300">{req.policy_rule || req.parameters?._veto_meta?.policy_rule || "RULE-REVIEW"}</code>
+                        </span>
+                        <span className="text-amber-400 font-mono">
+                          Synced to Arduino OLED
+                        </span>
+                      </div>
                     </div>
                   </div>
 

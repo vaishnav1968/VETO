@@ -23,11 +23,12 @@ class ArduinoProtocol:
         return f"STATUS:{status_text[:20]}\n"
 
     @staticmethod
-    def format_pending(approval_id: str, operation: str, target: str) -> str:
+    def format_pending(approval_id: str, operation: str, target: str, reason: str = "") -> str:
         # Arduino OLED line width is limited (approx 16-20 chars)
         clean_op = operation[:8].upper()
         clean_target = target.split("/")[-1][:12]
-        return f"PENDING:{approval_id}:{clean_op}:{clean_target}\n"
+        clean_why = reason[:16].upper() if reason else "REVIEW_REQ"
+        return f"PENDING:{approval_id}:{clean_op}:{clean_target}:{clean_why}\n"
 
     @staticmethod
     def format_decision(approval_id: str, decision: str) -> str:

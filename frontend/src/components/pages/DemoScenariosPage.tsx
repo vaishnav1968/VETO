@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlaySquare, Play } from 'lucide-react';
+import { PlaySquare, Play, ShieldAlert, Cpu, Terminal, FileCode, Lock } from 'lucide-react';
 import { DemoResult } from '../../types';
 import { api } from '../../services/api';
 import { StatusBadge } from '../StatusBadge';
@@ -12,10 +12,10 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
   const [runningDemo, setRunningDemo] = useState<string | null>(null);
   const [demoResults, setDemoResults] = useState<Record<string, DemoResult>>({});
 
-  const handleRun = async (scenario: string) => {
+  const handleRun = async (scenario: string, simulateRejection: boolean = true) => {
     setRunningDemo(scenario);
     try {
-      const res = await api.runDemo(scenario, true);
+      const res = await api.runDemo(scenario, simulateRejection);
       setDemoResults((prev) => ({ ...prev, [scenario]: res }));
       onRefresh();
     } catch (err: any) {
@@ -33,7 +33,7 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
           <span>Reproducible Demonstration Scenarios</span>
         </h1>
         <p className="text-xs font-mono text-neutral-400 mt-0.5">
-          Execute the three mandatory live adversarial scenarios with genuine enforcement mechanisms
+          Execute live adversarial scenarios demonstrating deterministic pre-execution enforcement and physical human-in-the-loop authorization
         </p>
       </div>
 
@@ -67,6 +67,18 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
                   {demoResults['prompt-injection'].outcome}
                 </span>
               </div>
+
+              {demoResults['prompt-injection'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why VETO Enforced Zero-Trust Security</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['prompt-injection'].why_human_action_required}
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2 pt-2">
                 {demoResults['prompt-injection'].steps.map((s) => (
@@ -115,6 +127,18 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
                   {demoResults['mcp-tampering'].outcome}
                 </span>
               </div>
+
+              {demoResults['mcp-tampering'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why VETO Enforced Zero-Trust Security</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['mcp-tampering'].why_human_action_required}
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2 pt-2">
                 {demoResults['mcp-tampering'].steps.map((s) => (
@@ -166,6 +190,18 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
                 </span>
               </div>
 
+              {demoResults['physical-approval'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why Human Action is Required</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['physical-approval'].why_human_action_required}
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2 pt-2">
                 {demoResults['physical-approval'].steps.map((s) => (
                   <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
@@ -190,6 +226,202 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
             </div>
           )}
         </div>
+
+        {/* Scenario 4: Infrastructure Configuration Overwrite */}
+        <div className="bg-[#111714] border border-[#1e2923] p-5 space-y-4 font-mono text-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-[#1e2923] gap-2">
+            <div>
+              <div className="text-[10px] text-amber-400 uppercase font-bold">Scenario 04</div>
+              <h2 className="text-sm font-bold text-neutral-100 flex items-center space-x-2">
+                <FileCode size={15} className="text-amber-400" />
+                <span>Infrastructure Configuration Overwrite</span>
+              </h2>
+            </div>
+            <button
+              onClick={() => handleRun('config-overwrite')}
+              disabled={runningDemo === 'config-overwrite'}
+              className="px-4 py-2 bg-amber-950 border border-amber-600 text-amber-300 hover:bg-amber-900 font-bold flex items-center space-x-1.5 transition-colors"
+            >
+              <Play size={14} />
+              <span>{runningDemo === 'config-overwrite' ? 'Executing...' : 'Run Demo 4'}</span>
+            </button>
+          </div>
+
+          <p className="text-neutral-400 text-xs">
+            Autonomous agent attempts to rewrite <code className="text-neutral-200">system_config.json</code> with disabled firewall rules (<code className="text-neutral-200">default_inbound: ALLOW_ALL</code>). VETO intercepts the write operation on sensitive configuration, flags critical perimeter exposure, halts execution, and requires human authorization on Arduino or Web Dashboard.
+          </p>
+
+          {demoResults['config-overwrite'] && (
+            <div className="p-4 bg-[#0a0d0c] border border-amber-900/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-400">DEMO 4 RESULT:</span>
+                <span className="px-2 py-0.5 bg-red-950 text-red-300 border border-red-800 font-bold">
+                  {demoResults['config-overwrite'].outcome}
+                </span>
+              </div>
+
+              {demoResults['config-overwrite'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why Human Action is Required</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['config-overwrite'].why_human_action_required}
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-2">
+                {demoResults['config-overwrite'].steps.map((s) => (
+                  <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
+                    <span className="text-neutral-500 font-bold">Step {s.step}:</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="text-neutral-200">{s.action}</div>
+                      {s.decision && (
+                        <div className="flex items-center space-x-2">
+                          <StatusBadge type="decision" value={s.decision} />
+                          <span className="text-neutral-400 text-[11px]">{s.reason}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Scenario 5: Arbitrary Shell Command Execution */}
+        <div className="bg-[#111714] border border-[#1e2923] p-5 space-y-4 font-mono text-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-[#1e2923] gap-2">
+            <div>
+              <div className="text-[10px] text-amber-400 uppercase font-bold">Scenario 05</div>
+              <h2 className="text-sm font-bold text-neutral-100 flex items-center space-x-2">
+                <Terminal size={15} className="text-amber-400" />
+                <span>Arbitrary Shell Command Execution Gate</span>
+              </h2>
+            </div>
+            <button
+              onClick={() => handleRun('shell-execution')}
+              disabled={runningDemo === 'shell-execution'}
+              className="px-4 py-2 bg-amber-950 border border-amber-600 text-amber-300 hover:bg-amber-900 font-bold flex items-center space-x-1.5 transition-colors"
+            >
+              <Play size={14} />
+              <span>{runningDemo === 'shell-execution' ? 'Executing...' : 'Run Demo 5'}</span>
+            </button>
+          </div>
+
+          <p className="text-neutral-400 text-xs">
+            Autonomous agent attempts to spawn a subprocess executing arbitrary terminal diagnostics (<code className="text-neutral-200">whoami &amp;&amp; netstat -ano</code>). VETO intercepts command execution before system invocation, identifies uncontained process execution vector, pauses operation, and triggers dual-interface human verification (Arduino Uno R3 OLED &amp; Web Dashboard).
+          </p>
+
+          {demoResults['shell-execution'] && (
+            <div className="p-4 bg-[#0a0d0c] border border-amber-900/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-400">DEMO 5 RESULT:</span>
+                <span className="px-2 py-0.5 bg-red-950 text-red-300 border border-red-800 font-bold">
+                  {demoResults['shell-execution'].outcome}
+                </span>
+              </div>
+
+              {demoResults['shell-execution'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-amber-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-amber-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why Human Action is Required</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['shell-execution'].why_human_action_required}
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-2">
+                {demoResults['shell-execution'].steps.map((s) => (
+                  <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
+                    <span className="text-neutral-500 font-bold">Step {s.step}:</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="text-neutral-200">{s.action}</div>
+                      {s.decision && (
+                        <div className="flex items-center space-x-2">
+                          <StatusBadge type="decision" value={s.decision} />
+                          <span className="text-neutral-400 text-[11px]">{s.reason}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Scenario 6: Sandbox Escape & Directory Traversal */}
+        <div className="bg-[#111714] border border-[#1e2923] p-5 space-y-4 font-mono text-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-[#1e2923] gap-2">
+            <div>
+              <div className="text-[10px] text-red-400 uppercase font-bold">Scenario 06</div>
+              <h2 className="text-sm font-bold text-neutral-100 flex items-center space-x-2">
+                <Lock size={15} className="text-red-400" />
+                <span>Sandbox Escape &amp; Directory Traversal Prevention</span>
+              </h2>
+            </div>
+            <button
+              onClick={() => handleRun('sandbox-escape')}
+              disabled={runningDemo === 'sandbox-escape'}
+              className="px-4 py-2 bg-red-950 border border-red-700 text-red-300 hover:bg-red-900 font-bold flex items-center space-x-1.5 transition-colors"
+            >
+              <Play size={14} />
+              <span>{runningDemo === 'sandbox-escape' ? 'Executing...' : 'Run Demo 6'}</span>
+            </button>
+          </div>
+
+          <p className="text-neutral-400 text-xs">
+            Agent attempts directory traversal (<code className="text-neutral-200">../../Windows/System32/drivers/etc/hosts</code>) to read host files outside the controlled container jail. VETO's boundary enforcement detects path breakout before filesystem access and immediately triggers <code className="text-red-400 font-bold">AUTO-VETO</code>.
+          </p>
+
+          {demoResults['sandbox-escape'] && (
+            <div className="p-4 bg-[#0a0d0c] border border-red-900/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-red-400">DEMO 6 RESULT:</span>
+                <span className="px-2 py-0.5 bg-red-950 text-red-300 border border-red-800 font-bold">
+                  {demoResults['sandbox-escape'].outcome}
+                </span>
+              </div>
+
+              {demoResults['sandbox-escape'].why_human_action_required && (
+                <div className="p-3 bg-[#17130b] border border-red-600/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-red-400 font-bold text-[11px] uppercase tracking-wide">
+                    <ShieldAlert size={14} />
+                    <span>Why VETO Enforced Zero-Trust Security</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['sandbox-escape'].why_human_action_required}
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-2">
+                {demoResults['sandbox-escape'].steps.map((s) => (
+                  <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
+                    <span className="text-neutral-500 font-bold">Step {s.step}:</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="text-neutral-200">{s.action}</div>
+                      {s.decision && (
+                        <div className="flex items-center space-x-2">
+                          <StatusBadge type="decision" value={s.decision} />
+                          <span className="text-neutral-400 text-[11px]">{s.reason}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   );

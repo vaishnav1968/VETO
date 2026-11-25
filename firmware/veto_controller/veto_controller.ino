@@ -78,6 +78,7 @@ SystemState currentState = STATE_NORMAL;
 char currentApprovalId[16] = "";
 char currentOperation[16]  = "";
 char currentTarget[24]     = "";
+char currentReason[24]     = "REVIEW REQUIRED";
 char systemStatusText[32]  = "SYSTEM NOMINAL";
 char lastDecisionText[16]  = "";
 
@@ -112,20 +113,24 @@ void updateOLED() {
   }
   else if (currentState == STATE_PENDING_APPROVAL) {
     display.setTextSize(1);
-    display.setCursor(0, 13);
+    display.setCursor(0, 11);
     display.print(F("REQ: "));
     display.print(currentApprovalId);
 
-    display.setCursor(0, 24);
+    display.setCursor(0, 21);
     display.print(F("OP:  "));
     display.print(currentOperation);
 
-    display.setCursor(0, 35);
+    display.setCursor(0, 31);
     display.print(F("TGT: "));
     display.print(currentTarget);
 
-    display.drawLine(0, 48, 127, 48, SSD1306_WHITE);
-    display.setCursor(4, 52);
+    display.setCursor(0, 41);
+    display.print(F("WHY: "));
+    display.print(currentReason);
+
+    display.drawLine(0, 50, 127, 50, SSD1306_WHITE);
+    display.setCursor(4, 54);
     display.print(F("[APPROVE]   [REJECT]"));
   }
   else if (currentState == STATE_DECISION_FEEDBACK) {
@@ -186,18 +191,21 @@ void processIncomingCommand(String cmd) {
     if (currentState == STATE_NORMAL) updateOLED();
   }
   else if (cmd.startsWith("PENDING:")) {
-    // Format: PENDING:<id>:<operation>:<target>
+    // Format: PENDING:<id>:<operation>:<target>[:<reason>]
     int idx1 = cmd.indexOf(':', 8);
     int idx2 = cmd.indexOf(':', idx1 + 1);
+    int idx3 = cmd.indexOf(':', idx2 + 1);
 
     if (idx1 > 0 && idx2 > 0) {
       String id = cmd.substring(8, idx1);
       String op = cmd.substring(idx1 + 1, idx2);
-      String tgt = cmd.substring(idx2 + 1);
+      String tgt = (idx3 > 0) ? cmd.substring(idx2 + 1, idx3) : cmd.substring(idx2 + 1);
+      String why = (idx3 > 0) ? cmd.substring(idx3 + 1) : "REVIEW REQUIRED";
 
       id.toCharArray(currentApprovalId, sizeof(currentApprovalId));
       op.toCharArray(currentOperation, sizeof(currentOperation));
       tgt.toCharArray(currentTarget, sizeof(currentTarget));
+      why.toCharArray(currentReason, sizeof(currentReason));
 
       currentState = STATE_PENDING_APPROVAL;
       // Yellow LED for pending review

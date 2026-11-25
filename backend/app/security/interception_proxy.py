@@ -37,6 +37,38 @@ class InterceptionProxy:
         self.mcp_verifier = mcp_verifier
         self.heartbeat = heartbeat
 
+    def _derive_human_action_rationale(
+        self,
+        operation: str,
+        target_resource: str,
+        parameters: Dict[str, Any]
+    ) -> Tuple[str, str]:
+        if operation in {"delete_file", "rm", "unlink"}:
+            return (
+                "DESTRUCTIVE FILE REMOVAL: An autonomous AI model requested permanent deletion of a project file. Under Zero-Trust architecture, autonomous agents lack authority to delete workspace assets without verified human consent.",
+                "Permanent loss of file contents, broken references, or disruption to dependent software components."
+            )
+        elif "config" in target_resource or "policies" in target_resource or ".env" in target_resource:
+            return (
+                "CRITICAL SYSTEM CONFIGURATION MODIFICATION: Proposed changes modify core infrastructure parameters, firewall definitions, or authentication gateways.",
+                "Potential security firewall bypass, altered service credentials, or denial of system access."
+            )
+        elif operation in {"execute_command", "bash", "sh"}:
+            cmd = parameters.get("command", "") or target_resource
+            return (
+                f"ARBITRARY SHELL COMMAND EXECUTION: Agent attempted execution of shell command '{cmd}'. Shell execution introduces unpredictable OS side-effects and arbitrary process spawning.",
+                "Unrestricted process execution, local socket binding, or host system reconnaissance."
+            )
+        elif operation in {"http_request", "network_egress"}:
+            return (
+                f"UNWHITELISTED NETWORK ACCESS: Outbound request to external destination '{target_resource}'. Requires operator review to confirm destination legitimacy.",
+                "External telemetry exfiltration, unmonitored external network sessions, or unauthorized API consumption."
+            )
+        return (
+            f"HIGH-RISK WORKFLOW ACTION: The operation '{operation}' on resource '{target_resource}' exceeded the automated autonomous authorization threshold.",
+            "Potential alteration of workspace assets or system behavior."
+        )
+
     async def intercept_operation(
         self,
         agent_id: str,
@@ -190,12 +222,16 @@ class InterceptionProxy:
 
         elif decision == DecisionType.REVIEW:
             # Human Review required (Pause execution)
+            rationale, impact = self._derive_human_action_rationale(operation, target_resource, parameters)
             approved = await self.approval_manager.request_human_approval(
                 session_id=session_id,
                 agent_id=agent_id,
                 operation=operation,
                 target_resource=target_resource,
-                parameters=parameters
+                parameters=parameters,
+                risk_rationale=rationale,
+                potential_impact=impact,
+                policy_rule=rule_id
             )
 
             if approved:

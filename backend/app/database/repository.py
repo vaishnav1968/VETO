@@ -123,6 +123,12 @@ class AuditRepository:
     # Approvals
     async def save_approval(self, approval: ApprovalRequest) -> ApprovalRequest:
         async with aiosqlite.connect(self.db_path) as db:
+            params_to_save = dict(approval.parameters)
+            params_to_save["_veto_meta"] = {
+                "risk_rationale": approval.risk_rationale,
+                "potential_impact": approval.potential_impact,
+                "policy_rule": approval.policy_rule
+            }
             await db.execute(
                 """
                 INSERT INTO approvals (
@@ -138,7 +144,7 @@ class AuditRepository:
                     approval.operation,
                     approval.target_resource,
                     approval.action_hash,
-                    json.dumps(approval.parameters, sort_keys=True),
+                    json.dumps(params_to_save, sort_keys=True),
                     approval.created_at.isoformat(),
                     approval.expires_at.isoformat(),
                     approval.status,
@@ -176,6 +182,8 @@ class AuditRepository:
                 cursor = await db.execute("SELECT * FROM approvals ORDER BY created_at DESC")
             rows = await cursor.fetchall()
             for r in rows:
+                params = json.loads(r[6])
+                meta = params.get("_veto_meta", {}) if isinstance(params, dict) else {}
                 approvals.append(ApprovalRequest(
                     id=r[0],
                     session_id=r[1],
@@ -183,12 +191,15 @@ class AuditRepository:
                     operation=r[3],
                     target_resource=r[4],
                     action_hash=r[5],
-                    parameters=json.loads(r[6]),
+                    parameters=params,
                     created_at=datetime.fromisoformat(r[7]),
                     expires_at=datetime.fromisoformat(r[8]),
                     status=r[9],
                     resolved_by=r[10],
-                    resolved_at=datetime.fromisoformat(r[11]) if r[11] else None
+                    resolved_at=datetime.fromisoformat(r[11]) if r[11] else None,
+                    risk_rationale=meta.get("risk_rationale", "Human authorization required for sensitive operation."),
+                    potential_impact=meta.get("potential_impact", "Potential modification or loss of protected resources."),
+                    policy_rule=meta.get("policy_rule", "RULE-REVIEW")
                 ))
         return approvals
 
@@ -198,6 +209,8 @@ class AuditRepository:
             r = await cursor.fetchone()
             if not r:
                 return None
+            params = json.loads(r[6])
+            meta = params.get("_veto_meta", {}) if isinstance(params, dict) else {}
             return ApprovalRequest(
                 id=r[0],
                 session_id=r[1],
@@ -205,12 +218,15 @@ class AuditRepository:
                 operation=r[3],
                 target_resource=r[4],
                 action_hash=r[5],
-                parameters=json.loads(r[6]),
+                parameters=params,
                 created_at=datetime.fromisoformat(r[7]),
                 expires_at=datetime.fromisoformat(r[8]),
                 status=r[9],
                 resolved_by=r[10],
-                resolved_at=datetime.fromisoformat(r[11]) if r[11] else None
+                resolved_at=datetime.fromisoformat(r[11]) if r[11] else None,
+                risk_rationale=meta.get("risk_rationale", "Human authorization required for sensitive operation."),
+                potential_impact=meta.get("potential_impact", "Potential modification or loss of protected resources."),
+                policy_rule=meta.get("policy_rule", "RULE-REVIEW")
             )
 
     # Threats

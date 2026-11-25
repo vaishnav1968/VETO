@@ -51,7 +51,10 @@ class ApprovalManager:
         operation: str,
         target_resource: str,
         parameters: Dict[str, Any],
-        timeout_seconds: Optional[int] = None
+        timeout_seconds: Optional[int] = None,
+        risk_rationale: Optional[str] = None,
+        potential_impact: Optional[str] = None,
+        policy_rule: Optional[str] = None
     ) -> bool:
         """
         Creates a pending approval, sends details to Arduino OLED and Web Dashboard,
@@ -63,6 +66,10 @@ class ApprovalManager:
         expires_at = now + timedelta(seconds=timeout)
         action_hash = self.compute_action_hash(session_id, operation, target_resource, parameters)
 
+        rationale = risk_rationale or "High-risk operation requires human verification before execution."
+        impact = potential_impact or "Potential modification or loss of protected workspace resource."
+        rule = policy_rule or "RULE-REVIEW"
+
         approval = ApprovalRequest(
             id=approval_id,
             session_id=session_id,
@@ -73,7 +80,10 @@ class ApprovalManager:
             parameters=parameters,
             created_at=now,
             expires_at=expires_at,
-            status="PENDING"
+            status="PENDING",
+            risk_rationale=rationale,
+            potential_impact=impact,
+            policy_rule=rule
         )
 
         await self.repo.save_approval(approval)
@@ -84,9 +94,12 @@ class ApprovalManager:
         future = loop.create_future()
         self._pending_futures[approval_id] = future
 
+        # Brief short reason for OLED screen
+        short_why = "DELETION RISK" if "delete" in operation else ("CONFIG CHANGE" if "config" in target_resource else "SHELL CONTROL" if "command" in operation else "SENSITIVE OP")
+
         # 1. Send to Arduino via serial
         self.serial_manager.send_message(
-            ArduinoProtocol.format_pending(approval_id, operation, target_resource)
+            ArduinoProtocol.format_pending(approval_id, operation, target_resource, short_why)
         )
 
         # 2. Broadcast via WebSocket to Web Dashboard
