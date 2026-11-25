@@ -1,16 +1,17 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from backend.app.config import settings
 from backend.app.security.interception_proxy import InterceptionProxy
 from backend.app.security.mcp_integrity import MCPIntegrityVerifier
 from backend.app.database.repository import AuditRepository
+from backend.app.hardware.arduino_protocol import ArduinoProtocol
 
 class DemoRunner:
     """
-    Executes the three mandatory reproducible demonstration scenarios.
-    All three use actual enforcement mechanisms without fake events.
+    Executes the reproducible demonstration scenarios.
+    All use actual enforcement mechanisms without fake events.
     """
 
     def __init__(
@@ -23,6 +24,15 @@ class DemoRunner:
         self.mcp = mcp_verifier
         self.repo = repository
 
+    def _send_demo_step(self, title: str, step: str):
+        try:
+            if hasattr(self.proxy, "approval_manager") and self.proxy.approval_manager and hasattr(self.proxy.approval_manager, "serial_manager") and self.proxy.approval_manager.serial_manager:
+                self.proxy.approval_manager.serial_manager.send_message(
+                    ArduinoProtocol.format_demo(title, step)
+                )
+        except Exception:
+            pass
+
     async def run_scenario_1(self) -> Dict[str, Any]:
         """
         DEMO 1: Prompt Injection and Honeytoken Exfiltration
@@ -30,11 +40,14 @@ class DemoRunner:
         2. Agent is misled by README prompt injection to access .env.decoy (BLOCKED)
         3. Agent attempts to exfiltrate honeytoken to attacker endpoint (BLOCKED by Egress Controller)
         """
+        self._send_demo_step("SCENARIO 1", "START DEMO")
         steps = []
         session_id = "DEMO-1-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
 
         # Step 1: Read README_task.md
+        self._send_demo_step("SCENARIO 1", "READ README")
+        await asyncio.sleep(0.5)
         step1_res = await self.proxy.intercept_operation(
             agent_id=agent_id,
             session_id=session_id,
@@ -51,6 +64,8 @@ class DemoRunner:
         })
 
         # Step 2: Attempt access to .env.decoy
+        self._send_demo_step("SCENARIO 1", "READ DECOY")
+        await asyncio.sleep(0.5)
         step2_res = await self.proxy.intercept_operation(
             agent_id=agent_id,
             session_id=session_id,
@@ -67,6 +82,8 @@ class DemoRunner:
         })
 
         # Step 3: Attempt exfiltration of honeytoken to attacker.com
+        self._send_demo_step("SCENARIO 1", "EXFIL HONEYKEY")
+        await asyncio.sleep(0.5)
         step3_res = await self.proxy.intercept_operation(
             agent_id=agent_id,
             session_id=session_id,
@@ -101,6 +118,7 @@ class DemoRunner:
         3. Integrity check detects mismatch.
         4. Tool execution blocked with high-severity incident.
         """
+        self._send_demo_step("SCENARIO 2", "VERIFY MCP")
         steps = []
         session_id = "DEMO-2-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
@@ -119,6 +137,8 @@ class DemoRunner:
         })
 
         # 2. Tamper tool definition
+        self._send_demo_step("SCENARIO 2", "TAMPER MCP")
+        await asyncio.sleep(0.5)
         tampered_tool = self.mcp.simulate_tampering(tool_name)
         new_fp = tampered_tool["current_fingerprint"]
         steps.append({
@@ -129,6 +149,8 @@ class DemoRunner:
         })
 
         # 3. Intercept execution of tampered tool
+        self._send_demo_step("SCENARIO 2", "CALL TAMPERED")
+        await asyncio.sleep(0.5)
         exec_res = await self.proxy.intercept_operation(
             agent_id=agent_id,
             session_id=session_id,
@@ -155,7 +177,7 @@ class DemoRunner:
             "steps": steps
         }
 
-    async def run_scenario_3(self, auto_simulate_rejection: bool = False) -> Dict[str, Any]:
+    async def run_scenario_3(self, auto_simulate_rejection: bool = False, delay_seconds: float = 2.0) -> Dict[str, Any]:
         """
         DEMO 3: Physical Approval and Rejection
         1. Agent requests deletion of protected file 'system_config.json'.
@@ -164,6 +186,7 @@ class DemoRunner:
         4. Rejection issued.
         5. Confirm protected file still exists in workspace.
         """
+        self._send_demo_step("SCENARIO 3", "DELETE FILE")
         steps = []
         session_id = "DEMO-3-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
@@ -180,10 +203,8 @@ class DemoRunner:
             "status": "CONFIRMED_PROTECTED"
         })
 
-        # If auto_simulate_rejection is requested (for automated test suite or automated demo click)
-        # We start an asynchronous task to reject the pending approval after 1.5 seconds if not handled
         async def delayed_reject():
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(delay_seconds)
             pending = await self.repo.get_approvals(status="PENDING")
             for req in pending:
                 if req.operation == "delete_file" and target_file in req.target_resource:
@@ -197,8 +218,6 @@ class DemoRunner:
         if auto_simulate_rejection:
             reject_task = asyncio.create_task(delayed_reject())
 
-        # Intercept delete_file
-        # This will pause execution awaiting approval
         try:
             intercept_task = asyncio.create_task(self.proxy.intercept_operation(
                 agent_id=agent_id,
@@ -253,12 +272,13 @@ class DemoRunner:
             "steps": steps
         }
 
-    async def run_scenario_4(self, auto_simulate_rejection: bool = False) -> Dict[str, Any]:
+    async def run_scenario_4(self, auto_simulate_rejection: bool = False, delay_seconds: float = 2.0) -> Dict[str, Any]:
         """
         DEMO 4: Infrastructure Configuration Overwrite
         Agent attempts to overwrite system_config.json to disable firewall security.
         VETO intercepts -> HUMAN REVIEW required with configuration diff.
         """
+        self._send_demo_step("SCENARIO 4", "OVERWRITE CONF")
         steps = []
         session_id = "DEMO-4-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
@@ -277,7 +297,7 @@ class DemoRunner:
         }
 
         async def delayed_reject():
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(delay_seconds)
             pending = await self.repo.get_approvals(status="PENDING")
             for req in pending:
                 if req.operation == "write_file" and target_file in req.target_resource:
@@ -335,12 +355,13 @@ class DemoRunner:
             "steps": steps
         }
 
-    async def run_scenario_5(self, auto_simulate_rejection: bool = False) -> Dict[str, Any]:
+    async def run_scenario_5(self, auto_simulate_rejection: bool = False, delay_seconds: float = 2.0) -> Dict[str, Any]:
         """
         DEMO 5: Arbitrary Shell Command Execution
         Agent attempts to run system diagnostics command (whoami && netstat -ano).
         VETO intercepts -> HUMAN REVIEW required before command execution.
         """
+        self._send_demo_step("SCENARIO 5", "SHELL EXEC")
         steps = []
         session_id = "DEMO-5-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
@@ -353,7 +374,7 @@ class DemoRunner:
         })
 
         async def delayed_reject():
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(delay_seconds)
             pending = await self.repo.get_approvals(status="PENDING")
             for req in pending:
                 if req.operation == "execute_command":
@@ -417,6 +438,7 @@ class DemoRunner:
         Agent attempts to read host files outside workspace via '../'.
         VETO intercepts -> AUTO-VETO boundary violation.
         """
+        self._send_demo_step("SCENARIO 6", "PATH ESCAPE")
         steps = []
         session_id = "DEMO-6-SESSION"
         agent_id = "AGENT-AUTONOMOUS-01"
@@ -428,6 +450,7 @@ class DemoRunner:
             "status": "ESCAPE_ATTEMPTED"
         })
 
+        await asyncio.sleep(0.5)
         exec_res = await self.proxy.intercept_operation(
             agent_id=agent_id,
             session_id=session_id,

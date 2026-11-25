@@ -24,17 +24,19 @@
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// Pin Definitions
-const uint8_t PIN_BTN_APPROVE = 2;
-const uint8_t PIN_BTN_REJECT  = 3;
-const uint8_t PIN_BTN_ESTOP   = 4;
+// Pin Definitions (#define to eliminate SRAM usage)
+#define PIN_BTN_APPROVE 2
+#define PIN_BTN_REJECT  3
+#define PIN_BTN_ESTOP   4
 
-const uint8_t PIN_LED_RED   = 9;
-const uint8_t PIN_LED_GREEN = 10;
-const uint8_t PIN_LED_BLUE  = 11;
+#define PIN_LED_RED   9
+#define PIN_LED_GREEN 10
+#define PIN_LED_BLUE  11
+
+#define DEBOUNCE_DELAY_MS 50
+#define ANIM_INTERVAL_MS  65
 
 // Debounce timing
-const unsigned long DEBOUNCE_DELAY_MS = 50;
 unsigned long lastDebounceTimeApprove = 0;
 unsigned long lastDebounceTimeReject  = 0;
 unsigned long lastDebounceTimeEstop   = 0;
@@ -48,35 +50,42 @@ uint8_t btnStateReject  = HIGH;
 uint8_t btnStateEstop   = HIGH;
 
 // System States
-enum SystemState {
-  STATE_NORMAL,
+enum SystemState : uint8_t {
+  STATE_NORMAL = 0,
   STATE_PENDING_APPROVAL,
   STATE_DECISION_FEEDBACK,
   STATE_EMERGENCY_STOP,
-  STATE_CUSTOM_MESSAGE
+  STATE_CUSTOM_MESSAGE,
+  STATE_VETO_ALERT,
+  STATE_DEMO_ALERT
 };
 
 SystemState currentState = STATE_NORMAL;
 
-// Compact buffers to preserve SRAM for 1024-byte OLED frame
-char currentApprovalId[12] = "";
-char currentOperation[12]  = "";
-char currentTarget[16]     = "";
-char currentReason[16]     = "REVIEW REQUIRED";
-char systemStatusText[16]  = "SYSTEM NOMINAL";
+// Compact static buffers (strictly minimized to allow 1024-byte OLED framebuffer allocation)
+char currentApprovalId[10] = "";
+char currentOperation[10]  = "";
+char currentTarget[14]     = "";
+char currentReason[14]     = "REVIEW REQUIRED";
+char systemStatusText[14]  = "NOMINAL";
 char lastDecisionText[10]  = "";
 
-char customMsgLine1[18] = "VETO SECURITY";
-char customMsgLine2[18] = "OLED ACTIVE";
-char customMsgLine3[18] = "";
-unsigned long customMsgTimer = 0;
+// Shared auxiliary text buffers (used across VETO, DEMO, and CUSTOM_MESSAGE to save 120+ bytes SRAM)
+char auxText1[16] = "";
+char auxText2[16] = "";
+char auxText3[14] = "";
 
+unsigned long alertTimer = 0;
 unsigned long feedbackTimer = 0;
 unsigned long lastHeartbeatSend = 0;
 bool oledHardwareReady = false;
 
-// Fixed serial rx buffer (no heap String allocations)
-char serialRxBuf[64];
+// Animation state
+uint8_t animStep = 0;
+unsigned long lastAnimTime = 0;
+
+// Compact serial rx buffer
+char serialRxBuf[48];
 uint8_t serialRxIdx = 0;
 
 int getFreeRam() {
@@ -101,17 +110,86 @@ void updateOLED() {
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.print(F("VETO RUNTIME GUARD"));
+
+  // Animated mini-shield icon in top-right header (x=114..124, y=0..7)
+  display.drawRect(114, 0, 10, 8, SSD1306_WHITE);
+  display.drawPixel(114, 0, SSD1306_BLACK);
+  display.drawPixel(123, 0, SSD1306_BLACK);
+  display.drawPixel(114, 7, SSD1306_BLACK);
+  display.drawPixel(123, 7, SSD1306_BLACK);
+  if ((animStep / 6) % 2 == 0) {
+    display.drawPixel(118, 3, SSD1306_WHITE);
+    display.drawPixel(119, 3, SSD1306_WHITE);
+    display.drawPixel(118, 4, SSD1306_WHITE);
+  }
   display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
 
   if (currentState == STATE_EMERGENCY_STOP) {
+    bool flash = ((animStep / 4) % 2 == 0);
+    if (flash) {
+      display.fillRect(0, 11, 128, 24, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    }
     display.setTextSize(2);
-    display.setCursor(8, 16);
+    display.setCursor(8, 15);
     display.print(F("!! ESTOP !!"));
+    display.setTextColor(SSD1306_WHITE);
+
     display.setTextSize(1);
-    display.setCursor(0, 38);
+    display.setCursor(0, 39);
     display.print(F("EXECUTION HALTED"));
-    display.setCursor(0, 50);
+    display.setCursor(0, 51);
     display.print(F("Reset via Dashboard"));
+  }
+  else if (currentState == STATE_VETO_ALERT) {
+    // Inverted high-contrast AUTO-VETO banner
+    display.fillRect(0, 11, 128, 14, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(4, 14);
+    display.print(F(">> AUTO-VETO BLOCKED <<"));
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setCursor(0, 27);
+    display.print(F("WHY: "));
+    display.print(auxText1);
+
+    display.setCursor(0, 38);
+    display.print(F("TGT: "));
+    display.print(auxText2);
+
+    display.drawLine(0, 48, 127, 48, SSD1306_WHITE);
+
+    display.setCursor(0, 53);
+    if ((animStep / 4) % 2 == 0) {
+      display.print(F("[!] ZERO-TRUST ENFORCED"));
+    } else {
+      display.print(F("[-] OPERATION DENIED   "));
+    }
+  }
+  else if (currentState == STATE_DEMO_ALERT) {
+    // Inverted Demo Banner
+    display.fillRect(0, 11, 128, 12, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(6, 13);
+    display.print(F("RUNNING DEMO SCENARIO"));
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setCursor(0, 26);
+    display.print(F("SCN: "));
+    display.print(auxText1);
+
+    display.setCursor(0, 38);
+    display.print(F("ACT: "));
+    display.print(auxText2);
+
+    display.drawLine(0, 49, 127, 49, SSD1306_WHITE);
+
+    // Animated scanner bar across bottom
+    uint8_t barPos = (animStep * 3) % 110;
+    display.drawRect(0, 53, 127, 8, SSD1306_WHITE);
+    display.fillRect(barPos, 54, 16, 6, SSD1306_WHITE);
   }
   else if (currentState == STATE_PENDING_APPROVAL) {
     display.setTextSize(1);
@@ -119,26 +197,46 @@ void updateOLED() {
     display.print(F("REQ: "));
     display.print(currentApprovalId);
 
-    display.setCursor(0, 21);
+    display.setCursor(0, 20);
     display.print(F("OP:  "));
     display.print(currentOperation);
 
-    display.setCursor(0, 31);
+    display.setCursor(0, 29);
     display.print(F("TGT: "));
     display.print(currentTarget);
 
-    display.setCursor(0, 41);
+    display.setCursor(0, 38);
     display.print(F("WHY: "));
     display.print(currentReason);
 
-    display.drawLine(0, 50, 127, 50, SSD1306_WHITE);
-    display.setCursor(4, 54);
-    display.print(F("[APPROVE]   [REJECT]"));
+    // Animated button callout boxes
+    display.drawLine(0, 48, 127, 48, SSD1306_WHITE);
+    bool blinkBox = ((animStep / 6) % 2 == 0);
+
+    display.drawRect(2, 51, 58, 12, SSD1306_WHITE);
+    display.drawRect(67, 51, 58, 12, SSD1306_WHITE);
+
+    if (blinkBox) {
+      display.fillRect(2, 51, 58, 12, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.setCursor(8, 53);
+      display.print(F("APPROVE"));
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(77, 53);
+      display.print(F("REJECT"));
+    } else {
+      display.fillRect(67, 51, 58, 12, SSD1306_WHITE);
+      display.setCursor(8, 53);
+      display.print(F("APPROVE"));
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.setCursor(77, 53);
+      display.print(F("REJECT"));
+      display.setTextColor(SSD1306_WHITE);
+    }
   }
   else if (currentState == STATE_DECISION_FEEDBACK) {
     bool isApproved = (strcmp(lastDecisionText, "APPROVED") == 0);
 
-    // High-contrast inverted banner
     display.fillRect(0, 12, 128, 26, SSD1306_WHITE);
     display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
     display.setTextSize(2);
@@ -166,35 +264,51 @@ void updateOLED() {
   else if (currentState == STATE_CUSTOM_MESSAGE) {
     display.setTextSize(1);
     display.setCursor(0, 14);
-    display.print(customMsgLine1);
+    display.print(auxText1);
 
     display.setCursor(0, 27);
-    display.print(customMsgLine2);
+    display.print(auxText2);
 
-    if (strlen(customMsgLine3) > 0) {
+    if (strlen(auxText3) > 0) {
       display.setCursor(0, 40);
-      display.print(customMsgLine3);
+      display.print(auxText3);
     }
 
     display.drawLine(0, 51, 127, 51, SSD1306_WHITE);
     display.setCursor(0, 55);
     display.print(F("MSG: VETO CONTROLLER"));
   }
-  else { // STATE_NORMAL
+  else { // STATE_NORMAL with Cyber Animated Waveform
     display.setTextSize(1);
-    display.setCursor(0, 14);
+    display.setCursor(0, 12);
     display.print(F("STATUS: "));
     display.print(systemStatusText);
 
-    display.setCursor(0, 27);
-    display.print(F("OLED DISPLAY ONLINE"));
+    display.setCursor(0, 23);
+    display.print(F("SENTINEL: ARMED"));
 
-    display.setCursor(0, 39);
-    display.print(F("ZERO-TRUST ACTIVE"));
+    display.setCursor(0, 33);
+    display.print(F("ZERO-TRUST RUNTIME"));
 
-    display.drawLine(0, 51, 127, 51, SSD1306_WHITE);
-    display.setCursor(0, 55);
-    display.print(F("Mode: Hardware Leased"));
+    // Dynamic animated cyber radar pulse / heartbeat across screen
+    display.drawLine(0, 46, 127, 46, SSD1306_WHITE);
+
+    uint8_t pulseX = (animStep * 2) % 126;
+    if (pulseX > 10 && pulseX < 118) {
+      display.drawPixel(pulseX - 6, 46, SSD1306_BLACK);
+      display.drawPixel(pulseX - 5, 45, SSD1306_WHITE);
+      display.drawPixel(pulseX - 4, 43, SSD1306_WHITE);
+      display.drawPixel(pulseX - 3, 49, SSD1306_WHITE);
+      display.drawPixel(pulseX - 2, 51, SSD1306_WHITE);
+      display.drawPixel(pulseX - 1, 46, SSD1306_WHITE);
+      display.drawPixel(pulseX,     44, SSD1306_WHITE);
+      display.drawPixel(pulseX + 1, 46, SSD1306_WHITE);
+      display.drawCircle(pulseX, 46, 2, SSD1306_WHITE);
+    }
+
+    display.drawLine(0, 53, 127, 53, SSD1306_WHITE);
+    display.setCursor(0, 56);
+    display.print(F("Lease: Host Active"));
   }
 
   display.display();
@@ -224,6 +338,46 @@ void processIncomingCommand(char* cmd) {
     systemStatusText[sizeof(systemStatusText) - 1] = '\0';
     if (currentState == STATE_NORMAL) updateOLED();
   }
+  else if (strncmp(cmd, "VETO:", 5) == 0) {
+    char* r = cmd + 5;
+    char* t = strchr(r, ':');
+    if (t) {
+      *t = '\0';
+      t++;
+      strncpy(auxText2, t, sizeof(auxText2) - 1);
+    } else {
+      strncpy(auxText2, "BLOCKED", sizeof(auxText2) - 1);
+    }
+    strncpy(auxText1, r, sizeof(auxText1) - 1);
+    auxText1[sizeof(auxText1) - 1] = '\0';
+    auxText2[sizeof(auxText2) - 1] = '\0';
+
+    currentState = STATE_VETO_ALERT;
+    alertTimer = millis();
+    setLEDColor(255, 0, 0); // Solid RED for VETO
+    updateOLED();
+    Serial.println(F("VETO:ACK"));
+  }
+  else if (strncmp(cmd, "DEMO:", 5) == 0) {
+    char* t = cmd + 5;
+    char* s = strchr(t, ':');
+    if (s) {
+      *s = '\0';
+      s++;
+      strncpy(auxText2, s, sizeof(auxText2) - 1);
+    } else {
+      strncpy(auxText2, "ACTIVE", sizeof(auxText2) - 1);
+    }
+    strncpy(auxText1, t, sizeof(auxText1) - 1);
+    auxText1[sizeof(auxText1) - 1] = '\0';
+    auxText2[sizeof(auxText2) - 1] = '\0';
+
+    currentState = STATE_DEMO_ALERT;
+    alertTimer = millis();
+    setLEDColor(0, 180, 255); // Cyan / Blue for Demo
+    updateOLED();
+    Serial.println(F("DEMO:ACK"));
+  }
   else if (strncmp(cmd, "MSG:", 4) == 0) {
     char* p1 = cmd + 4;
     char* p2 = strchr(p1, ':');
@@ -239,25 +393,25 @@ void processIncomingCommand(char* cmd) {
       }
     }
 
-    strncpy(customMsgLine1, p1, sizeof(customMsgLine1) - 1);
-    customMsgLine1[sizeof(customMsgLine1) - 1] = '\0';
+    strncpy(auxText1, p1, sizeof(auxText1) - 1);
+    auxText1[sizeof(auxText1) - 1] = '\0';
 
     if (p2) {
-      strncpy(customMsgLine2, p2, sizeof(customMsgLine2) - 1);
-      customMsgLine2[sizeof(customMsgLine2) - 1] = '\0';
+      strncpy(auxText2, p2, sizeof(auxText2) - 1);
+      auxText2[sizeof(auxText2) - 1] = '\0';
     } else {
-      customMsgLine2[0] = '\0';
+      auxText2[0] = '\0';
     }
 
     if (p3) {
-      strncpy(customMsgLine3, p3, sizeof(customMsgLine3) - 1);
-      customMsgLine3[sizeof(customMsgLine3) - 1] = '\0';
+      strncpy(auxText3, p3, sizeof(auxText3) - 1);
+      auxText3[sizeof(auxText3) - 1] = '\0';
     } else {
-      customMsgLine3[0] = '\0';
+      auxText3[0] = '\0';
     }
 
     currentState = STATE_CUSTOM_MESSAGE;
-    customMsgTimer = millis();
+    alertTimer = millis();
     updateOLED();
     Serial.println(F("MSG:OK"));
   }
@@ -418,10 +572,9 @@ void setup() {
   Serial.println(getFreeRam());
 
   Wire.begin();
-  Wire.setClock(100000);
-  delay(300); // Allow OLED internal charge pump capacitors to reach operating voltage
+  Wire.setClock(400000); // 400kHz fast I2C mode
+  delay(300);
 
-  // Initialize display immediately to lock contiguous 1024-byte RAM buffer
   oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (!oledHardwareReady) {
     oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
@@ -436,18 +589,24 @@ void setup() {
     display.ssd1306_command(0xFF);
     display.dim(false);
 
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(2);
-    display.setCursor(4, 10);
-    display.println(F("VETO GUARD"));
-    display.setTextSize(1);
-    display.setCursor(8, 34);
-    display.println(F("OLED DISPLAY ONLINE"));
-    display.setCursor(14, 48);
-    display.println(F("ZERO-TRUST ACTIVE"));
-    display.display();
-    delay(1000);
+    // Dynamic Boot Animation with loading bar
+    for (int frame = 0; frame <= 10; frame++) {
+      display.clearDisplay();
+      display.setTextColor(SSD1306_WHITE);
+      display.setTextSize(2);
+      display.setCursor(4, 8);
+      display.println(F("VETO GUARD"));
+
+      display.setTextSize(1);
+      display.setCursor(6, 30);
+      display.println(F("ZERO-TRUST SENTINEL"));
+
+      display.drawRect(8, 46, 112, 10, SSD1306_WHITE);
+      display.fillRect(10, 48, frame * 10, 6, SSD1306_WHITE);
+      display.display();
+      delay(50);
+    }
+    delay(300);
   } else {
     Serial.println(F("OLED:INIT_FAILED:CHECK_RAM_OR_WIRING"));
   }
@@ -461,7 +620,7 @@ void setup() {
 void loop() {
   checkButtons();
 
-  // Fast non-blocking serial reading into fixed buffer
+  // Non-blocking serial reading
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
@@ -475,26 +634,44 @@ void loop() {
     }
   }
 
-  // Handle feedback display timeout (return to normal state after 3.5s)
+  // Animation frame update (~15 FPS)
+  unsigned long now = millis();
+  if (now - lastAnimTime >= ANIM_INTERVAL_MS) {
+    lastAnimTime = now;
+    animStep++;
+    updateOLED();
+  }
+
+  // Feedback display timeout (return to normal after 3.5s)
   if (currentState == STATE_DECISION_FEEDBACK) {
-    if (millis() - feedbackTimer > 3500) {
+    if (now - feedbackTimer > 3500) {
       currentState = STATE_NORMAL;
-      setLEDColor(0, 255, 0); // Return to Green
+      setLEDColor(0, 255, 0);
       updateOLED();
     }
   }
 
-  // Handle custom message display timeout (return to normal after 15s)
+  // VETO or DEMO alert timeout (return to normal after 4.0s)
+  if (currentState == STATE_VETO_ALERT || currentState == STATE_DEMO_ALERT) {
+    if (now - alertTimer > 4000) {
+      currentState = STATE_NORMAL;
+      setLEDColor(0, 255, 0);
+      updateOLED();
+    }
+  }
+
+  // Custom message timeout (return to normal after 15s)
   if (currentState == STATE_CUSTOM_MESSAGE) {
-    if (millis() - customMsgTimer > 15000) {
+    if (now - alertTimer > 15000) {
       currentState = STATE_NORMAL;
+      setLEDColor(0, 255, 0);
       updateOLED();
     }
   }
 
-  // Periodic Heartbeat every 3 seconds
-  if (millis() - lastHeartbeatSend > 3000) {
-    lastHeartbeatSend = millis();
+  // Heartbeat every 3 seconds
+  if (now - lastHeartbeatSend > 3000) {
+    lastHeartbeatSend = now;
     Serial.println(F("HEARTBEAT"));
   }
 }

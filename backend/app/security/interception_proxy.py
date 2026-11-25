@@ -8,6 +8,7 @@ from backend.app.security.honeytoken_detector import HoneytokenDetector
 from backend.app.security.egress_controller import EgressController
 from backend.app.security.mcp_integrity import MCPIntegrityVerifier
 from backend.app.hardware.heartbeat import HardwareHeartbeat
+from backend.app.hardware.arduino_protocol import ArduinoProtocol
 
 class InterceptionProxy:
     """
@@ -36,6 +37,15 @@ class InterceptionProxy:
         self.egress_controller = egress_controller
         self.mcp_verifier = mcp_verifier
         self.heartbeat = heartbeat
+
+    def _send_veto_alert(self, reason: str, target: str):
+        try:
+            if hasattr(self, "approval_manager") and self.approval_manager and hasattr(self.approval_manager, "serial_manager") and self.approval_manager.serial_manager:
+                self.approval_manager.serial_manager.send_message(
+                    ArduinoProtocol.format_veto(reason, target)
+                )
+        except Exception:
+            pass
 
     def _derive_human_action_rationale(
         self,
@@ -84,6 +94,7 @@ class InterceptionProxy:
 
         # 0. Emergency Stop check (Fail-closed)
         if self.heartbeat.emergency_stop_triggered:
+            self._send_veto_alert("ESTOP ACTIVE", target_resource)
             event = await self.audit_logger.log_event(SecurityEventCreate(
                 agent_id=agent_id,
                 session_id=session_id,
@@ -110,6 +121,7 @@ class InterceptionProxy:
             is_valid, msg, details = self.mcp_verifier.verify_tool_integrity(tool_to_check)
             if not is_valid:
                 # Log threat incident
+                self._send_veto_alert("MCP TAMPER", tool_to_check)
                 await self.honeytoken_detector.create_threat_incident(
                     threat_type="MCP_INTEGRITY_VIOLATION",
                     description=msg,
@@ -137,6 +149,7 @@ class InterceptionProxy:
         # 2. Honeytoken Decoy file access check
         is_decoy, decoy_msg = self.honeytoken_detector.check_resource_access(target_resource)
         if is_decoy:
+            self._send_veto_alert("HONEYTOKEN", target_resource)
             await self.honeytoken_detector.create_threat_incident(
                 threat_type="HONEYTOKEN_ACCESS_ATTEMPT",
                 description=decoy_msg or "Attempted access to decoy file",
@@ -167,6 +180,7 @@ class InterceptionProxy:
             payload = parameters.get("data")
             is_permitted, egress_msg, egress_details = self.egress_controller.inspect_outbound_request(url, payload)
             if not is_permitted:
+                self._send_veto_alert("EGRESS BLOCKED", url)
                 await self.honeytoken_detector.create_threat_incident(
                     threat_type="EGRESS_EXFILTRATION_BLOCKED",
                     description=egress_msg,
@@ -200,6 +214,8 @@ class InterceptionProxy:
 
         # 5. Handle Decision:
         if decision == DecisionType.VETO:
+            short_why = "BOUNDARY ESCAPE" if "path" in reason.lower() or "boundary" in reason.lower() or "traversal" in reason.lower() else ("BLOCKED CMD" if "command" in reason.lower() else "POLICY VETO")
+            self._send_veto_alert(short_why, target_resource)
             event = await self.audit_logger.log_event(SecurityEventCreate(
                 agent_id=agent_id,
                 session_id=session_id,

@@ -6,8 +6,12 @@ class ArduinoProtocol:
       STATUS:<text>                (e.g., STATUS:SYSTEM NORMAL)
       PENDING:<id>:<op>:<target>   (e.g., PENDING:APR-9812:DELETE:system_config.json)
       DECISION:<id>:<decision>     (e.g., DECISION:APR-9812:APPROVED)
+      VETO:<reason>:<target>       (e.g., VETO:HONEYTOKEN:.env.decoy)
+      DEMO:<title>:<step>          (e.g., DEMO:SCENARIO 1:HONEYTOKEN EXFIL)
+      MSG:<l1>:<l2>:<l3>           (e.g., MSG:TITLE:SUBTITLE:STATUS)
       PING:<nonce>                 (Heartbeat keepalive query)
       ESTOP_RESET                  (Clears emergency-stop state on Arduino)
+      SCAN                         (Run I2C diagnostic scan on Arduino bus)
     
     Arduino -> Host:
       READY                        (Sent when Arduino boots or resets)
@@ -16,6 +20,11 @@ class ArduinoProtocol:
       ESTOP                        (Physical EMERGENCY-STOP button triggered)
       PONG:<nonce>                 (Heartbeat keepalive response)
       HEARTBEAT                    (Periodic status ping from Arduino)
+      VETO:ACK                     (Veto alert received and displayed on OLED)
+      DEMO:ACK                     (Demo scenario alert received and displayed on OLED)
+      MSG:OK                       (Custom message acknowledged)
+      I2C:FOUND:<addr>             (I2C diagnostic scan result)
+      OLED:INIT_SUCCESS            (OLED initialized successfully)
     """
 
     @staticmethod
@@ -33,6 +42,18 @@ class ArduinoProtocol:
     @staticmethod
     def format_decision(approval_id: str, decision: str) -> str:
         return f"DECISION:{approval_id}:{decision.upper()}\n"
+
+    @staticmethod
+    def format_veto(reason: str, target: str) -> str:
+        clean_reason = reason[:14].strip().upper()
+        clean_target = target.split("/")[-1][:14].strip()
+        return f"VETO:{clean_reason}:{clean_target}\n"
+
+    @staticmethod
+    def format_demo(title: str, step: str) -> str:
+        clean_title = title[:14].strip().upper()
+        clean_step = step[:14].strip().upper()
+        return f"DEMO:{clean_title}:{clean_step}\n"
 
     @staticmethod
     def format_ping(nonce: str) -> str:
@@ -61,6 +82,12 @@ class ArduinoProtocol:
             return "I2C_DIAG", {"raw": line}
         elif line.startswith("OLED:"):
             return "OLED_STATUS", {"raw": line}
+        elif line == "VETO:ACK":
+            return "VETO_ACK", {}
+        elif line == "DEMO:ACK":
+            return "DEMO_ACK", {}
+        elif line == "MSG:OK":
+            return "MSG_ACK", {}
         elif line.startswith("APPROVE:"):
             parts = line.split(":", 1)
             return "APPROVE", {"approval_id": parts[1].strip()}
@@ -70,7 +97,5 @@ class ArduinoProtocol:
         elif line.startswith("PONG:"):
             parts = line.split(":", 1)
             return "PONG", {"nonce": parts[1].strip()}
-        elif line == "MSG:OK":
-            return "MSG_ACK", {}
         else:
             return "UNKNOWN", {"raw": line}
