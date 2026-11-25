@@ -81,6 +81,10 @@ unsigned long lastAnimTime  = 0;
 uint8_t animStep            = 0;
 bool oledReady              = false;
 
+// Button test visual feedback variables
+uint8_t lastButtonPressed         = 0;
+unsigned long lastButtonPressTime = 0;
+
 // Serial RX Buffer (newline-delimited JSON commands)
 char serialRxBuf[96];
 uint8_t serialRxIdx = 0;
@@ -397,7 +401,17 @@ void updateOLED() {
     }
 
     display.setCursor(0, 54);
-    display.print(F("D2:OK  D3:NO  D4:KILL"));
+    if (millis() - lastButtonPressTime < 1200) {
+      if (lastButtonPressed == PIN_BTN_APPROVE) {
+        display.print(F(">> D2 APPROVE: OK! <<"));
+      } else if (lastButtonPressed == PIN_BTN_REJECT) {
+        display.print(F(">> D3 REJECT:  OK! <<"));
+      } else {
+        display.print(F("D2:OK  D3:NO  D4:KILL"));
+      }
+    } else {
+      display.print(F("D2:OK  D3:NO  D4:KILL"));
+    }
   }
 
   display.display();
@@ -576,7 +590,7 @@ void loop() {
     updateOLED();
   }
 
-  // D2: Approve Button (Only active when a request is pending)
+  // D2: Approve Button
   if (checkButtonPress(btnApprove)) {
     if (currentState == STATE_PENDING) {
       Serial.print(F("{\"type\":\"DECISION\",\"id\":\""));
@@ -586,10 +600,16 @@ void loop() {
       currentState = STATE_CONFIRM_APPROVED;
       stateTimer = now;
       updateOLED();
+    } else {
+      // In ARMED or idle mode, provide instant tactile confirmation
+      lastButtonPressed = PIN_BTN_APPROVE;
+      lastButtonPressTime = now;
+      Serial.println(F("{\"type\":\"BUTTON_TEST\",\"button\":\"APPROVE\",\"pin\":2,\"state\":\"PRESSED\",\"status\":\"OK\"}"));
+      updateOLED();
     }
   }
 
-  // D3: Reject Button (Only active when a request is pending)
+  // D3: Reject Button
   if (checkButtonPress(btnReject)) {
     if (currentState == STATE_PENDING) {
       Serial.print(F("{\"type\":\"DECISION\",\"id\":\""));
@@ -598,6 +618,12 @@ void loop() {
 
       currentState = STATE_CONFIRM_REJECTED;
       stateTimer = now;
+      updateOLED();
+    } else {
+      // In ARMED or idle mode, provide instant tactile confirmation
+      lastButtonPressed = PIN_BTN_REJECT;
+      lastButtonPressTime = now;
+      Serial.println(F("{\"type\":\"BUTTON_TEST\",\"button\":\"REJECT\",\"pin\":3,\"state\":\"PRESSED\",\"status\":\"OK\"}"));
       updateOLED();
     }
   }
