@@ -127,5 +127,22 @@ export const api = {
     });
     if (!res.ok) throw new Error('Failed to intercept operation');
     return res.json();
+  },
+
+  // Hardware OLED Control
+  async displayOledMessage(line1: string, line2: string = '', line3: string = ''): Promise<any> {
+    const res = await fetch(`${API_BASE}/hardware/display`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line1, line2, line3 })
+    });
+    if (!res.ok) throw new Error('Failed to send message to OLED');
+    return res.json();
+  },
+
+  async scanHardwareI2C(): Promise<any> {
+    const res = await fetch(`${API_BASE}/hardware/scan`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to trigger I2C scan');
+    return res.json();
   }
 };

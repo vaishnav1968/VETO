@@ -18,6 +18,7 @@ from backend.app.core.execution_manager import ExecutionManager
 from backend.app.core.approval_manager import ApprovalManager
 from backend.app.hardware.serial_manager import SerialManager
 from backend.app.hardware.heartbeat import HardwareHeartbeat
+from backend.app.hardware.arduino_protocol import ArduinoProtocol
 from backend.app.core.policy_engine import PolicyEngine
 from backend.app.api.demo import DemoRunner
 
@@ -294,11 +295,30 @@ async def update_policies(policy: PolicyDocument):
     policy_engine.load_policy()
     return {"success": True, "policy": policy}
 
-# ----------------- Hardware Status -----------------
+class DisplayMessageRequest(BaseModel):
+    line1: str = "VETO SECURITY"
+    line2: Optional[str] = "OLED ACTIVE"
+    line3: Optional[str] = ""
+
+# ----------------- Hardware Status & OLED Display -----------------
 @router.get("/hardware/status")
 async def get_hardware_status():
     serial_mgr = get_serial_manager()
     return serial_mgr.get_status()
+
+@router.post("/hardware/display")
+async def display_oled_message(req: DisplayMessageRequest):
+    serial_mgr = get_serial_manager()
+    msg = ArduinoProtocol.format_custom_message(req.line1, req.line2 or "", req.line3 or "")
+    sent = serial_mgr.send_message(msg)
+    await ws_manager.broadcast("OLED_MESSAGE_SENT", req.model_dump())
+    return {"success": sent, "message": req.model_dump()}
+
+@router.post("/hardware/scan")
+async def scan_hardware_i2c():
+    serial_mgr = get_serial_manager()
+    sent = serial_mgr.send_message("SCAN\n")
+    return {"success": sent, "message": "I2C scan command dispatched to Arduino"}
 
 # ----------------- Demonstrations -----------------
 @router.post("/demo/{scenario}/run")

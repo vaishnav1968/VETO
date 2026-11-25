@@ -3,7 +3,7 @@
  * Platform: Arduino Uno R3 (ATmega328P)
  * 
  * Hardware Peripherals:
- * - 0.96" SSD1306 OLED (128x64 I2C, Address 0x3C): SDA -> A4, SCL -> A5
+ * - 0.96" SSD1306 OLED (128x64 I2C, Address 0x3C / 0x3D): SDA -> A4, SCL -> A5
  * - APPROVE Button (Momentary NO): Pin 2 (INPUT_PULLUP)
  * - REJECT Button (Momentary NO): Pin 3 (INPUT_PULLUP)
  * - EMERGENCY STOP Button (NC Safety Switch): Pin 4 (INPUT_PULLUP)
@@ -14,19 +14,24 @@
  * 
  * Serial Protocol (115200 Baud):
  * Host -> Arduino:
- *   STATUS:<text>                Update idle display status text
- *   PENDING:<id>:<op>:<target>   New operation pending review
- *   DECISION:<id>:<state>        Result of review (APPROVED / REJECTED)
- *   PING:<nonce>                 Heartbeat request from host
- *   ESTOP_RESET                  Reset emergency stop lock
+ *   STATUS:<text>                     Update idle display status text
+ *   MSG:<line1>[:<line2>[:<line3>]]   Display custom message on OLED
+ *   PENDING:<id>:<op>:<target>[:<why>] New operation pending review
+ *   DECISION:<id>:<state>             Result of review (APPROVED / REJECTED)
+ *   PING:<nonce>                      Heartbeat request from host
+ *   ESTOP_RESET                       Reset emergency stop lock
+ *   SCAN                              Perform live I2C bus scan
  * 
  * Arduino -> Host:
- *   READY                        Device booted and ready
- *   APPROVE:<id>                 Approve button pressed
- *   REJECT:<id>                  Reject button pressed
- *   ESTOP                        Emergency stop button pressed / open
- *   PONG:<nonce>                 Heartbeat response to host
- *   HEARTBEAT                    Periodic keepalive
+ *   READY                             Device booted and ready
+ *   I2C:FOUND:<addr>                  I2C peripheral detected
+ *   I2C:NONE_FOUND                    No I2C device responded
+ *   OLED:READY:<addr>                 OLED initialized successfully
+ *   APPROVE:<id>                      Approve button pressed
+ *   REJECT:<id>                       Reject button pressed
+ *   ESTOP                             Emergency stop button pressed / open
+ *   PONG:<nonce>                      Heartbeat response to host
+ *   HEARTBEAT                         Periodic keepalive
  */
 
 #define SSD1306_NO_SPLASH
@@ -37,7 +42,7 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
-#define SCREEN_ADDRESS 0x3C
+#define DEFAULT_SCREEN_ADDRESS 0x3C
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -69,7 +74,8 @@ enum SystemState {
   STATE_NORMAL,
   STATE_PENDING_APPROVAL,
   STATE_DECISION_FEEDBACK,
-  STATE_EMERGENCY_STOP
+  STATE_EMERGENCY_STOP,
+  STATE_CUSTOM_MESSAGE
 };
 
 SystemState currentState = STATE_NORMAL;
@@ -82,8 +88,16 @@ char currentReason[24]     = "REVIEW REQUIRED";
 char systemStatusText[32]  = "SYSTEM NOMINAL";
 char lastDecisionText[16]  = "";
 
+// Custom Message Display
+char customMsgLine1[22] = "VETO SECURITY";
+char customMsgLine2[22] = "OLED ACTIVE";
+char customMsgLine3[22] = "";
+unsigned long customMsgTimer = 0;
+
 unsigned long feedbackTimer = 0;
 unsigned long lastHeartbeatSend = 0;
+unsigned long lastOledRetry = 0;
+bool oledHardwareReady = false;
 
 void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(PIN_LED_RED, r);
@@ -91,7 +105,31 @@ void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
   analogWrite(PIN_LED_BLUE, b);
 }
 
+bool ensureOLEDReady() {
+  if (oledHardwareReady) return true;
+  delay(20);
+  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    oledHardwareReady = true;
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(0xFF);
+    display.dim(false);
+    Serial.println(F("OLED:ATTACHED:0x3C"));
+    return true;
+  }
+  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3D)) {
+    oledHardwareReady = true;
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(0xFF);
+    display.dim(false);
+    Serial.println(F("OLED:ATTACHED:0x3D"));
+    return true;
+  }
+  return false;
+}
+
 void updateOLED() {
+  if (!oledHardwareReady && !ensureOLEDReady()) return;
+
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
 
@@ -109,7 +147,7 @@ void updateOLED() {
     display.setCursor(0, 38);
     display.print(F("EXECUTION HALTED"));
     display.setCursor(0, 50);
-    display.print(F("Reset via Admin Dashboard"));
+    display.print(F("Reset via Dashboard"));
   }
   else if (currentState == STATE_PENDING_APPROVAL) {
     display.setTextSize(1);
@@ -162,23 +200,57 @@ void updateOLED() {
       display.print(F("Action Blocked."));
     }
   }
+  else if (currentState == STATE_CUSTOM_MESSAGE) {
+    display.setTextSize(1);
+    display.setCursor(0, 14);
+    display.print(customMsgLine1);
+
+    display.setCursor(0, 27);
+    display.print(customMsgLine2);
+
+    if (strlen(customMsgLine3) > 0) {
+      display.setCursor(0, 40);
+      display.print(customMsgLine3);
+    }
+
+    display.drawLine(0, 51, 127, 51, SSD1306_WHITE);
+    display.setCursor(0, 55);
+    display.print(F("MSG: VETO CONTROLLER"));
+  }
   else { // STATE_NORMAL
     display.setTextSize(1);
-    display.setCursor(0, 16);
+    display.setCursor(0, 14);
     display.print(F("STATUS: "));
     display.print(systemStatusText);
 
-    display.setCursor(0, 30);
+    display.setCursor(0, 27);
+    display.print(F("OLED DISPLAY ONLINE"));
+
+    display.setCursor(0, 39);
     display.print(F("ZERO-TRUST ACTIVE"));
 
-    display.setCursor(0, 44);
+    display.drawLine(0, 51, 127, 51, SSD1306_WHITE);
+    display.setCursor(0, 55);
     display.print(F("Mode: Hardware Leased"));
-
-    display.setCursor(0, 56);
-    display.print(F("Audit Chain: SYNCED"));
   }
 
   display.display();
+}
+
+void runI2CScan() {
+  uint8_t count = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.print(F("I2C:FOUND:0x"));
+      if (addr < 16) Serial.print(F("0"));
+      Serial.println(addr, HEX);
+      count++;
+    }
+  }
+  if (count == 0) {
+    Serial.println(F("I2C:NONE_FOUND:CHECK_SDA_A4_SCL_A5"));
+  }
 }
 
 void processIncomingCommand(String cmd) {
@@ -189,6 +261,24 @@ void processIncomingCommand(String cmd) {
     String txt = cmd.substring(7);
     txt.toCharArray(systemStatusText, sizeof(systemStatusText));
     if (currentState == STATE_NORMAL) updateOLED();
+  }
+  else if (cmd.startsWith("MSG:")) {
+    // Format: MSG:<line1>[:<line2>[:<line3>]]
+    int idx1 = cmd.indexOf(':', 4);
+    int idx2 = (idx1 > 0) ? cmd.indexOf(':', idx1 + 1) : -1;
+
+    String l1 = (idx1 > 0) ? cmd.substring(4, idx1) : cmd.substring(4);
+    String l2 = (idx1 > 0) ? ((idx2 > 0) ? cmd.substring(idx1 + 1, idx2) : cmd.substring(idx1 + 1)) : "";
+    String l3 = (idx2 > 0) ? cmd.substring(idx2 + 1) : "";
+
+    l1.toCharArray(customMsgLine1, sizeof(customMsgLine1));
+    l2.toCharArray(customMsgLine2, sizeof(customMsgLine2));
+    l3.toCharArray(customMsgLine3, sizeof(customMsgLine3));
+
+    currentState = STATE_CUSTOM_MESSAGE;
+    customMsgTimer = millis();
+    updateOLED();
+    Serial.println(F("MSG:OK"));
   }
   else if (cmd.startsWith("PENDING:")) {
     // Format: PENDING:<id>:<operation>:<target>[:<reason>]
@@ -242,6 +332,9 @@ void processIncomingCommand(String cmd) {
     setLEDColor(0, 255, 0);
     updateOLED();
   }
+  else if (cmd == "SCAN") {
+    runI2CScan();
+  }
 }
 
 void checkButtons() {
@@ -290,7 +383,6 @@ void checkButtons() {
   lastBtnStateReject = readingReject;
 
   // 3. EMERGENCY STOP Button
-  // Assuming momentary/latching button pressed to pull LOW or break circuit
   int readingEstop = digitalRead(PIN_BTN_ESTOP);
   if (readingEstop != lastBtnStateEstop) {
     lastDebounceTimeEstop = now;
@@ -300,7 +392,7 @@ void checkButtons() {
       btnStateEstop = readingEstop;
       if (btnStateEstop == LOW) {
         currentState = STATE_EMERGENCY_STOP;
-        setLEDColor(255, 0, 0); // Flashing Red
+        setLEDColor(255, 0, 0); // Red
         updateOLED();
         Serial.println(F("ESTOP"));
       }
@@ -312,6 +404,7 @@ void checkButtons() {
 void setup() {
   // Initialize Serial
   Serial.begin(115200);
+  Serial.setTimeout(50); // Fast non-blocking serial timeout
   while (!Serial && millis() < 1000);
 
   // Pin Modes
@@ -326,24 +419,64 @@ void setup() {
   // Initial Green
   setLEDColor(0, 255, 0);
 
-  // Initialize I2C OLED
+  // Initialize I2C Bus
   Wire.begin();
-  bool oledReady = display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
-  if (!oledReady) {
-    // Fallback to secondary SSD1306 I2C address (0x3D) if 0x3C does not respond
-    oledReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+  Wire.setClock(100000); // 100kHz standard I2C speed for maximum cable noise tolerance
+  delay(500); // Give OLED power-on reset capacitor time to charge
+
+  // Auto-detect OLED I2C Address
+  uint8_t detectedAddr = 0;
+  for (uint8_t addr = 0x3C; addr <= 0x3D; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      detectedAddr = addr;
+      break;
+    }
+  }
+  if (detectedAddr == 0) {
+    // Scan all valid I2C addresses
+    for (uint8_t addr = 1; addr < 127; addr++) {
+      Wire.beginTransmission(addr);
+      if (Wire.endTransmission() == 0) {
+        detectedAddr = addr;
+        break;
+      }
+    }
   }
 
-  if (oledReady) {
+  uint8_t finalAddr = (detectedAddr != 0) ? detectedAddr : DEFAULT_SCREEN_ADDRESS;
+
+  // Initialize Adafruit SSD1306 Display
+  oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, finalAddr);
+  if (!oledHardwareReady && finalAddr != 0x3D) {
+    oledHardwareReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+    if (oledHardwareReady) finalAddr = 0x3D;
+  }
+
+  if (oledHardwareReady) {
+    // Maximize display contrast
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(0xFF);
+    display.dim(false);
+
+    Serial.print(F("OLED:READY:0x"));
+    if (finalAddr < 16) Serial.print(F("0"));
+    Serial.println(finalAddr, HEX);
+
+    // Initial Splash Screen
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(18, 20);
-    display.println(F("VETO SECURITY"));
-    display.setCursor(20, 35);
-    display.println(F("INITIALIZING..."));
+    display.setCursor(12, 16);
+    display.println(F("VETO RUNTIME GUARD"));
+    display.setCursor(10, 30);
+    display.println(F("OLED DISPLAY ONLINE"));
+    display.setCursor(14, 44);
+    display.println(F("ZERO-TRUST ACTIVE"));
     display.display();
-    delay(500);
+    delay(800);
+  } else {
+    Serial.println(F("OLED:NOT_DETECTED:CHECK_SDA_SCL"));
   }
 
   currentState = STATE_NORMAL;
@@ -372,9 +505,25 @@ void loop() {
     }
   }
 
+  // Handle custom message display timeout (return to normal after 10s)
+  if (currentState == STATE_CUSTOM_MESSAGE) {
+    if (millis() - customMsgTimer > 10000) {
+      currentState = STATE_NORMAL;
+      updateOLED();
+    }
+  }
+
   // Periodic Heartbeat every 3 seconds
   if (millis() - lastHeartbeatSend > 3000) {
     lastHeartbeatSend = millis();
     Serial.println(F("HEARTBEAT"));
+  }
+
+  // Auto-retry OLED initialization if not yet attached
+  if (!oledHardwareReady && (millis() - lastOledRetry > 2000)) {
+    lastOledRetry = millis();
+    if (ensureOLEDReady()) {
+      updateOLED();
+    }
   }
 }

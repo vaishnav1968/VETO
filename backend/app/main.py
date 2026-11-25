@@ -66,6 +66,11 @@ async def lifespan(app: FastAPI):
         elif msg_type == "PONG":
             nonce = data.get("nonce", "")
             heartbeat.handle_pong(nonce)
+        elif msg_type in ("I2C_DIAG", "OLED_STATUS"):
+            logger.info(f"HARDWARE DIAGNOSTIC: {data.get('raw')}")
+            asyncio.create_task(ws_manager.broadcast("HARDWARE_DIAGNOSTIC", data))
+        elif msg_type == "MSG_ACK":
+            logger.info("OLED Custom Message Acknowledged by Arduino.")
 
     serial_manager = SerialManager(on_message_callback=on_serial_message)
 

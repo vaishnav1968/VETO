@@ -39,6 +39,13 @@ class ArduinoProtocol:
         return f"PING:{nonce}\n"
 
     @staticmethod
+    def format_custom_message(line1: str, line2: str = "", line3: str = "") -> str:
+        clean_l1 = line1[:20]
+        clean_l2 = line2[:20] if line2 else ""
+        clean_l3 = line3[:20] if line3 else ""
+        return f"MSG:{clean_l1}:{clean_l2}:{clean_l3}\n"
+
+    @staticmethod
     def parse_message(raw_line: str):
         line = raw_line.strip()
         if not line:
@@ -50,6 +57,10 @@ class ArduinoProtocol:
             return "ESTOP", {}
         elif line == "HEARTBEAT":
             return "HEARTBEAT", {}
+        elif line.startswith("I2C:"):
+            return "I2C_DIAG", {"raw": line}
+        elif line.startswith("OLED:"):
+            return "OLED_STATUS", {"raw": line}
         elif line.startswith("APPROVE:"):
             parts = line.split(":", 1)
             return "APPROVE", {"approval_id": parts[1].strip()}
@@ -59,5 +70,7 @@ class ArduinoProtocol:
         elif line.startswith("PONG:"):
             parts = line.split(":", 1)
             return "PONG", {"nonce": parts[1].strip()}
+        elif line == "MSG:OK":
+            return "MSG_ACK", {}
         else:
             return "UNKNOWN", {"raw": line}
