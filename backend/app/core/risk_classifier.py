@@ -29,7 +29,7 @@ class RiskClassifier:
     ]
 
     DESTRUCTIVE_OPERATIONS = {"delete_file", "rm", "unlink", "truncate", "drop_table"}
-    SENSITIVE_CONFIGS = {"system_config.json", "policies.yaml", "settings.json", ".env"}
+    SENSITIVE_CONFIGS = {"system_config.json", "policies.yaml", "settings.json", ".env", "production_release.json", "security_patch.json"}
 
     @classmethod
     def classify(cls, operation: str, target_resource: str, parameters: Dict[str, Any]) -> Tuple[RiskLevel, str]:

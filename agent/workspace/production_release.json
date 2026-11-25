@@ -1,0 +1,7 @@
+{
+  "release_id": "REL-2026-VETO-09",
+  "version": "v2.4.0",
+  "signed_by": "VETO_AUTHORIZED_OPERATOR",
+  "description": "Production security policy update",
+  "timestamp": "2026-11-25T19:30:00Z"
+}

@@ -186,6 +186,13 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                 <Play size={12} />
                 <span>Demo 6: Sandbox Escape</span>
               </button>
+              <button
+                onClick={() => onTriggerDemo('authorized-approval')}
+                className="px-3 py-1.5 bg-[#122319] border border-emerald-600 text-emerald-300 hover:bg-emerald-900 text-xs font-mono flex items-center space-x-1.5 transition-colors font-bold"
+              >
+                <Play size={12} />
+                <span>Demo 7: Approve Demands</span>
+              </button>
             </div>
           </div>
         </div>

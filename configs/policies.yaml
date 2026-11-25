@@ -119,7 +119,7 @@ rules:
     risk_level: "HIGH"
     condition:
       operation_types: ["write_file", "modify_file", "truncate"]
-      target_resource_contains: ["system_config.json", "policies.yaml", "settings.json", ".env"]
+      target_resource_contains: ["system_config.json", "policies.yaml", "settings.json", ".env", "production_release.json", "security_patch.json"]
     reason: "HIGH: Modification of critical system/configuration file requires human authorization"
 
   - id: "RULE-REVIEW-SHELL-EXEC"

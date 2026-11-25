@@ -474,3 +474,123 @@ class DemoRunner:
             "why_human_action_required": "AUTO-VETO (CRITICAL THREAT): Path traversal attempts to break out of the /workspace jail. Because this is an unambiguous containment violation, VETO does not prompt for human review—it immediately blocks the request and generates a security alert.",
             "steps": steps
         }
+
+    async def run_scenario_7(self, auto_simulate_approval: bool = True, delay_seconds: float = 2.0) -> Dict[str, Any]:
+        """
+        DEMO 7: Authorized Deployment with Human Approval
+        1. Agent requests creation/overwrite of sensitive 'production_release.json'.
+        2. VETO intercepts request -> HUMAN REVIEW required under Zero-Trust policy.
+        3. Pending approval broadcast to OLED & Web Dashboard with Yellow LED.
+        4. Operator grants approval (via physical Arduino Pin 2 APPROVE button or Dashboard).
+        5. VETO authorizes operation, turns OLED/LED Green, and safely executes inside sandbox.
+        6. Verifies production_release.json successfully created and cryptographically logged.
+        """
+        self._send_demo_step("SCENARIO 7", "START DEMO")
+        steps = []
+        session_id = "DEMO-7-SESSION"
+        agent_id = "AGENT-AUTONOMOUS-01"
+        target_file = "production_release.json"
+        target_path = settings.BASE_DIR / settings.WORKSPACE_DIR / target_file
+
+        # Clean up any leftover file from previous run
+        if target_path.exists():
+            try:
+                target_path.unlink()
+            except Exception:
+                pass
+
+        steps.append({
+            "step": 1,
+            "action": f"Agent prepares production release payload for '{target_file}'",
+            "status": "PREPARED"
+        })
+
+        release_payload = {
+            "release_id": "REL-2026-VETO-09",
+            "version": "v2.4.0",
+            "signed_by": "VETO_AUTHORIZED_OPERATOR",
+            "description": "Production security policy update",
+            "timestamp": "2026-11-25T19:30:00Z"
+        }
+
+        async def delayed_approve():
+            start_t = asyncio.get_running_loop().time()
+            await asyncio.sleep(delay_seconds)
+            while (asyncio.get_running_loop().time() - start_t) < (delay_seconds + 4.0):
+                pending = await self.repo.get_approvals(status="PENDING")
+                for req in pending:
+                    if req.operation == "write_file" and target_file in req.target_resource:
+                        await self.proxy.approval_manager.resolve_approval(
+                            approval_id=req.id,
+                            decision="APPROVED",
+                            resolved_by="ARDUINO_APPROVE_BUTTON" if not auto_simulate_approval else "HUMAN_OPERATOR_VERIFIED"
+                        )
+                        return
+                await asyncio.sleep(0.1)
+
+        approve_task = None
+        if auto_simulate_approval:
+            approve_task = asyncio.create_task(delayed_approve())
+
+        self._send_demo_step("SCENARIO 7", "DEMAND APPROVAL")
+
+        try:
+            intercept_task = asyncio.create_task(self.proxy.intercept_operation(
+                agent_id=agent_id,
+                session_id=session_id,
+                operation="write_file",
+                target_resource=target_file,
+                parameters={"path": target_file, "content": json.dumps(release_payload, indent=2)}
+            ))
+
+            if auto_simulate_approval:
+                exec_res = await intercept_task
+            else:
+                done, pending = await asyncio.wait([intercept_task], timeout=3.0)
+                if done:
+                    exec_res = done.pop().result()
+                else:
+                    return {
+                        "scenario": "DEMO 7: Authorized Deployment with Human Approval",
+                        "outcome": "PENDING_APPROVAL",
+                        "enforcement_successful": True,
+                        "message": "Sensitive release paused. Awaiting operator APPROVAL via Arduino Pin 2 or Dashboard.",
+                        "steps": steps
+                    }
+        finally:
+            if approve_task and not approve_task.done():
+                approve_task.cancel()
+
+        steps.append({
+            "step": 2,
+            "action": f"VETO intercepted '{target_file}' write request and requested human operator review",
+            "decision": "REVIEW",
+            "status": "PAUSED_FOR_REVIEW",
+            "hardware_feedback": "OLED Yellow prompt [APPROVE] [REJECT]"
+        })
+
+        steps.append({
+            "step": 3,
+            "action": f"Human Operator verified and APPROVED the operation",
+            "decision": exec_res["decision"],
+            "status": exec_res["status"],
+            "hardware_feedback": "OLED Green confirmation [APPROVED]",
+            "reason": exec_res["reason"]
+        })
+
+        file_created = target_path.exists()
+        steps.append({
+            "step": 4,
+            "action": f"Verified authorized execution: '{target_file}' deployed to controlled workspace",
+            "file_written": file_created,
+            "status": "EXECUTED_SAFELY" if file_created else "WRITE_FAILED"
+        })
+
+        return {
+            "scenario": "DEMO 7: Authorized Deployment with Human Approval",
+            "outcome": "APPROVED — OPERATION SAFELY EXECUTED",
+            "enforcement_successful": (exec_res["decision"] == "ALLOW" and exec_res["status"] == "EXECUTED" and file_created),
+            "file_created": file_created,
+            "why_human_action_required": "CONTROLLED PRIVILEGE RELEASE: AI agents must not autonomously mutate production configurations without authorized human verification. Once an operator examines the proposed change and signals APPROVE on the physical hardware or dashboard, VETO unlocks the controlled sandbox execution environment and logs the decision into the permanent tamper-evident audit ledger.",
+            "steps": steps
+        }

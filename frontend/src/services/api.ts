@@ -108,8 +108,8 @@ export const api = {
   },
 
   // Demos
-  async runDemo(scenario: string, simulateRejection = true): Promise<DemoResult> {
-    const res = await fetch(`${API_BASE}/demo/${scenario}/run?simulate_rejection=${simulateRejection}`, { method: 'POST' });
+  async runDemo(scenario: string, simulateRejection = true, simulateApproval = true): Promise<DemoResult> {
+    const res = await fetch(`${API_BASE}/demo/${scenario}/run?simulate_rejection=${simulateRejection}&simulate_approval=${simulateApproval}`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to execute demonstration');
     return res.json();
   },

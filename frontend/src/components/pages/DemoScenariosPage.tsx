@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlaySquare, Play, ShieldAlert, Cpu, Terminal, FileCode, Lock } from 'lucide-react';
+import { PlaySquare, Play, ShieldAlert, Cpu, Terminal, FileCode, Lock, CheckCircle2 } from 'lucide-react';
 import { DemoResult } from '../../types';
 import { api } from '../../services/api';
 import { StatusBadge } from '../StatusBadge';
@@ -412,6 +412,80 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
                         <div className="flex items-center space-x-2">
                           <StatusBadge type="decision" value={s.decision} />
                           <span className="text-neutral-400 text-[11px]">{s.reason}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Scenario 7: Authorized Deployment with Human Approval */}
+        <div className="bg-[#111714] border border-[#1e2923] p-5 space-y-4 font-mono text-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-[#1e2923] gap-2">
+            <div>
+              <div className="text-[10px] text-emerald-400 uppercase font-bold">Scenario 07</div>
+              <h2 className="text-sm font-bold text-neutral-100 flex items-center space-x-2">
+                <CheckCircle2 size={15} className="text-emerald-400" />
+                <span>Authorized Production Deployment (Demands Approved)</span>
+              </h2>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => handleRun('authorized-approval', false)}
+                disabled={runningDemo === 'authorized-approval'}
+                className="px-4 py-2 bg-emerald-950 border border-emerald-600 text-emerald-300 hover:bg-emerald-900 font-bold flex items-center space-x-1.5 transition-colors"
+                title="Pauses execution and simulates authorized operator approval via Arduino hardware"
+              >
+                <Play size={14} />
+                <span>{runningDemo === 'authorized-approval' ? 'Authorizing...' : 'Run Demo 7 (Approve Demands)'}</span>
+              </button>
+            </div>
+          </div>
+
+          <p className="text-neutral-400 text-xs">
+            Demonstrates the full positive authorization lifecycle: an autonomous agent requests to deploy sensitive release configuration <code className="text-neutral-200">production_release.json</code>. VETO intercepts and halts execution under Zero-Trust policy, displays <code className="text-amber-400">[APPROVE] [REJECT]</code> on the physical Arduino OLED screen with Yellow LED, receives verified human operator approval, flashes <code className="text-emerald-400 font-bold">[APPROVED]</code> with Solid Green LED, and safely commits the write inside the sandbox jail.
+          </p>
+
+          {demoResults['authorized-approval'] && (
+            <div className="p-4 bg-[#0a0d0c] border border-emerald-900/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-emerald-400">DEMO 7 RESULT:</span>
+                <span className="px-2 py-0.5 bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold">
+                  {demoResults['authorized-approval'].outcome}
+                </span>
+              </div>
+
+              {demoResults['authorized-approval'].why_human_action_required && (
+                <div className="p-3 bg-[#0d1a13] border border-emerald-700/50 space-y-1">
+                  <div className="flex items-center space-x-1.5 text-emerald-400 font-bold text-[11px] uppercase tracking-wide">
+                    <CheckCircle2 size={14} />
+                    <span>Zero-Trust Authority Principle</span>
+                  </div>
+                  <p className="text-neutral-200 text-xs">
+                    {demoResults['authorized-approval'].why_human_action_required}
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-2">
+                {demoResults['authorized-approval'].steps.map((s) => (
+                  <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
+                    <span className="text-neutral-500 font-bold">Step {s.step}:</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="text-neutral-200">{s.action}</div>
+                      {s.hardware_feedback && (
+                        <div className="text-emerald-400 text-[11px] font-semibold">
+                          Hardware: {s.hardware_feedback}
+                        </div>
+                      )}
+                      {s.decision && (
+                        <div className="flex items-center space-x-2 mt-1">
+                          <StatusBadge type="decision" value={s.decision} />
+                          {s.status && <span className="text-neutral-300 text-[11px]">[{s.status}]</span>}
+                          {s.reason && <span className="text-neutral-400 text-[11px]">{s.reason}</span>}
                         </div>
                       )}
                     </div>

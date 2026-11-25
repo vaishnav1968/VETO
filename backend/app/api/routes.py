@@ -322,7 +322,7 @@ async def scan_hardware_i2c():
 
 # ----------------- Demonstrations -----------------
 @router.post("/demo/{scenario}/run")
-async def run_demo_scenario(scenario: str, simulate_rejection: bool = True):
+async def run_demo_scenario(scenario: str, simulate_rejection: bool = True, simulate_approval: bool = True):
     runner = get_demo_runner()
     if scenario in ("prompt-injection", "1"):
         res = await runner.run_scenario_1()
@@ -336,6 +336,8 @@ async def run_demo_scenario(scenario: str, simulate_rejection: bool = True):
         res = await runner.run_scenario_5(auto_simulate_rejection=simulate_rejection)
     elif scenario in ("sandbox-escape", "6"):
         res = await runner.run_scenario_6()
+    elif scenario in ("authorized-approval", "approval", "approve", "7"):
+        res = await runner.run_scenario_7(auto_simulate_approval=simulate_approval)
     else:
         raise HTTPException(status_code=404, detail="Unknown demonstration scenario")
     

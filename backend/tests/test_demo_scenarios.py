@@ -86,7 +86,14 @@ async def test_all_three_demo_scenarios(tmp_path, monkeypatch):
     assert "SANDBOX BOUNDARY VIOLATION" in demo6_res["outcome"]
     assert "why_human_action_required" in demo6_res
 
-    # 7. Verify Audit Chain across all recorded demo events
+    # 7. Run Demo 7 (Authorized Deployment with Human Approval)
+    demo7_res = await runner.run_scenario_7(auto_simulate_approval=True, delay_seconds=0.2)
+    assert demo7_res["enforcement_successful"] is True
+    assert demo7_res["file_created"] is True
+    assert "APPROVED" in demo7_res["outcome"]
+    assert "why_human_action_required" in demo7_res
+
+    # 8. Verify Audit Chain across all recorded demo events
     chain_check = await audit_logger.verify_chain()
     assert chain_check["valid"] is True
     assert chain_check["total_events"] > 0
