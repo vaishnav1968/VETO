@@ -78,3 +78,33 @@ async def test_approval_rejection_prevents_execution(tmp_path, monkeypatch):
         timeout_seconds=5
     )
     assert is_approved is False
+
+@pytest.mark.asyncio
+async def test_approval_timeout_fails_closed(tmp_path, monkeypatch):
+    test_db = tmp_path / "test_approvals_timeout.db"
+    monkeypatch.setattr("backend.app.database.db.get_db_path", lambda: test_db)
+    monkeypatch.setattr("backend.app.database.repository.get_db_path", lambda: test_db)
+
+    await init_db()
+    repo = AuditRepository()
+    serial_mgr = SerialManager()
+    serial_mgr.is_simulation = True
+
+    mgr = ApprovalManager(repository=repo, serial_manager=serial_mgr)
+
+    # Request approval with 0.2 second timeout and no response
+    is_approved = await mgr.request_human_approval(
+        session_id="SESS-TIMEOUT",
+        agent_id="AGENT-01",
+        operation="delete_file",
+        target_resource="system_config.json",
+        parameters={"path": "system_config.json"},
+        timeout_seconds=1
+    )
+    assert is_approved is False
+
+    # Verify status in database is EXPIRED / REJECTED
+    approvals = await repo.get_approvals()
+    assert len(approvals) == 1
+    assert approvals[0].status in {"EXPIRED", "REJECTED"}
+    assert approvals[0].resolved_by == "SYSTEM_TIMEOUT"

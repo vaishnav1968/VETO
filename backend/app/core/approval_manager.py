@@ -131,7 +131,9 @@ class ApprovalManager:
             approval.resolved_at = now
             await self.repo.update_approval(approval)
             if approval_id in self._pending_futures:
-                self._pending_futures[approval_id].set_result(False)
+                future = self._pending_futures[approval_id]
+                if not future.done():
+                    future.set_result(False)
             return approval
 
         # Apply decision
