@@ -49,10 +49,14 @@ async def lifespan(app: FastAPI):
         # Handle physical buttons
         if msg_type == "APPROVE":
             approval_id = data.get("approval_id")
+            if not approval_id and approval_manager._active_requests:
+                approval_id = next(iter(approval_manager._active_requests.keys()))
             if approval_id:
                 asyncio.create_task(approval_manager.resolve_approval(approval_id, "APPROVED", "ARDUINO_BUTTON"))
         elif msg_type == "REJECT":
             approval_id = data.get("approval_id")
+            if not approval_id and approval_manager._active_requests:
+                approval_id = next(iter(approval_manager._active_requests.keys()))
             if approval_id:
                 asyncio.create_task(approval_manager.resolve_approval(approval_id, "REJECTED", "ARDUINO_BUTTON"))
         elif msg_type == "ESTOP":

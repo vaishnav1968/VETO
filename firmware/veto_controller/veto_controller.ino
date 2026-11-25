@@ -129,16 +129,33 @@ void updateOLED() {
     display.print(F("[APPROVE]   [REJECT]"));
   }
   else if (currentState == STATE_DECISION_FEEDBACK) {
-    display.setTextSize(2);
-    display.setCursor(12, 18);
-    display.print(lastDecisionText);
+    bool isApproved = (strcmp(lastDecisionText, "APPROVED") == 0);
 
+    // High-contrast inverted banner
+    display.fillRect(0, 12, 128, 26, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    display.setTextSize(2);
+    if (isApproved) {
+      display.setCursor(16, 17);
+      display.print(F("APPROVED"));
+    } else {
+      display.setCursor(16, 17);
+      display.print(F("REJECTED"));
+    }
+
+    // Normal info text below banner
+    display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
-    display.setCursor(0, 40);
-    display.print(F("ID: "));
+    display.setCursor(0, 42);
+    display.print(F("ID:  "));
     display.print(currentApprovalId);
-    display.setCursor(0, 52);
-    display.print(F("Decision enforced."));
+
+    display.setCursor(0, 53);
+    if (isApproved) {
+      display.print(F("Action Authorized."));
+    } else {
+      display.print(F("Action Blocked."));
+    }
   }
   else { // STATE_NORMAL
     display.setTextSize(1);
@@ -231,6 +248,11 @@ void checkButtons() {
     if (readingApprove != btnStateApprove) {
       btnStateApprove = readingApprove;
       if (btnStateApprove == LOW && currentState == STATE_PENDING_APPROVAL) {
+        strncpy(lastDecisionText, "APPROVED", sizeof(lastDecisionText));
+        currentState = STATE_DECISION_FEEDBACK;
+        feedbackTimer = millis();
+        setLEDColor(0, 255, 0); // Solid Green
+        updateOLED();
         Serial.print(F("APPROVE:"));
         Serial.println(currentApprovalId);
       }
@@ -247,6 +269,11 @@ void checkButtons() {
     if (readingReject != btnStateReject) {
       btnStateReject = readingReject;
       if (btnStateReject == LOW && currentState == STATE_PENDING_APPROVAL) {
+        strncpy(lastDecisionText, "REJECTED", sizeof(lastDecisionText));
+        currentState = STATE_DECISION_FEEDBACK;
+        feedbackTimer = millis();
+        setLEDColor(255, 0, 0); // Solid Red
+        updateOLED();
         Serial.print(F("REJECT:"));
         Serial.println(currentApprovalId);
       }
@@ -328,9 +355,9 @@ void loop() {
     processIncomingCommand(incoming);
   }
 
-  // Handle feedback display timeout (return to normal state after 2.5s)
+  // Handle feedback display timeout (return to normal state after 3.5s)
   if (currentState == STATE_DECISION_FEEDBACK) {
-    if (millis() - feedbackTimer > 2500) {
+    if (millis() - feedbackTimer > 3500) {
       currentState = STATE_NORMAL;
       setLEDColor(0, 255, 0); // Return to Green
       updateOLED();
