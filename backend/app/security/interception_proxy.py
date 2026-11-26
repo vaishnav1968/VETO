@@ -47,6 +47,15 @@ class InterceptionProxy:
         except Exception:
             pass
 
+    def _send_error_alert(self, reason: str, target: str):
+        try:
+            if hasattr(self, "approval_manager") and self.approval_manager and hasattr(self.approval_manager, "serial_manager") and self.approval_manager.serial_manager:
+                self.approval_manager.serial_manager.send_message(
+                    ArduinoProtocol.format_error(reason, target)
+                )
+        except Exception:
+            pass
+
     def _derive_human_action_rationale(
         self,
         operation: str,
@@ -257,6 +266,8 @@ class InterceptionProxy:
                     target_resource=target_resource,
                     parameters=parameters
                 )
+                if isinstance(exec_result, dict) and exec_result.get("success") is False:
+                    self._send_error_alert("EXEC ERROR", target_resource)
                 event = await self.audit_logger.log_event(SecurityEventCreate(
                     agent_id=agent_id,
                     session_id=session_id,
@@ -301,6 +312,8 @@ class InterceptionProxy:
                 target_resource=target_resource,
                 parameters=parameters
             )
+            if isinstance(exec_result, dict) and exec_result.get("success") is False:
+                self._send_error_alert("EXEC ERROR", target_resource)
             event = await self.audit_logger.log_event(SecurityEventCreate(
                 agent_id=agent_id,
                 session_id=session_id,

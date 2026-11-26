@@ -1,0 +1,22 @@
+Adafruit_GFX.o: \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_GFX_Library\Adafruit_GFX.cpp \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_GFX_Library\Adafruit_GFX.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Arduino.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/binary.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/WCharacter.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/WString.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/HardwareSerial.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Stream.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Print.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Printable.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/USBAPI.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Arduino.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\variants\standard/pins_arduino.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Print.h \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_GFX_Library\gfxfont.h \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_BusIO/Adafruit_I2CDevice.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\libraries\Wire\src/Wire.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\cores\arduino/Stream.h \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_BusIO/Adafruit_SPIDevice.h \
+ C:\Users\vaish\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.8\libraries\SPI\src/SPI.h \
+ C:\Users\vaish\OneDrive\Documents\Arduino\libraries\Adafruit_GFX_Library\glcdfont.c

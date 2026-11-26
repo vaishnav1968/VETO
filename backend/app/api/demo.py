@@ -594,3 +594,87 @@ class DemoRunner:
             "why_human_action_required": "CONTROLLED PRIVILEGE RELEASE: AI agents must not autonomously mutate production configurations without authorized human verification. Once an operator examines the proposed change and signals APPROVE on the physical hardware or dashboard, VETO unlocks the controlled sandbox execution environment and logs the decision into the permanent tamper-evident audit ledger.",
             "steps": steps
         }
+
+    async def run_human_control_mission(self) -> Dict[str, Any]:
+        """
+        LIVE HUMAN-CONTROL MISSION:
+        1. Safe operation: Agent reads 'project_data.txt' (AUTO-ALLOW).
+        2. Human Control Gate: Agent requests deployment of 'production_release.json'.
+           Execution PAUSES and waits for the HUMAN to press Pin 2 (APPROVE) or Pin 3 (REJECT)
+           on the Arduino (or decide in the Web Dashboard).
+        3. Threat / Error Trap: Agent attempts to read '.env.decoy' -> AUTO-VETO (Red Alarm LED).
+        """
+        self._send_demo_step("HUMAN MISSION", "STEP 1: READ")
+        steps = []
+        session_id = "HUMAN-MISSION-LIVE"
+        agent_id = "AGENT-DEVOPS-01"
+        target_file = "production_release.json"
+
+        # Step 1: Safe Read
+        step1_res = await self.proxy.intercept_operation(
+            agent_id=agent_id,
+            session_id=session_id,
+            operation="read_file",
+            target_resource="project_data.txt",
+            parameters={"path": "project_data.txt"}
+        )
+        steps.append({
+            "step": 1,
+            "action": "Agent reads project context 'project_data.txt'",
+            "decision": step1_res["decision"],
+            "status": step1_res["status"],
+            "reason": step1_res["reason"]
+        })
+
+        # Step 2: Live Human Control Gate (NO auto-simulation - waits for real button press!)
+        self._send_demo_step("HUMAN MISSION", "PRESS SWITCH!")
+        release_payload = {
+            "release_id": "REL-HUMAN-SIGNED-01",
+            "version": "v3.0.0",
+            "approved_by": "PHYSICAL_ARDUINO_SWITCH",
+            "status": "LIVE_AUTHORIZED"
+        }
+        step2_res = await self.proxy.intercept_operation(
+            agent_id=agent_id,
+            session_id=session_id,
+            operation="write_file",
+            target_resource=target_file,
+            parameters={"path": target_file, "content": json.dumps(release_payload, indent=2)}
+        )
+        steps.append({
+            "step": 2,
+            "action": f"Human Control Gate for deploying '{target_file}' (Arduino Pin 2 / Pin 3)",
+            "decision": step2_res["decision"],
+            "status": step2_res["status"],
+            "hardware_feedback": "Resolved by Physical Human Switch / Operator",
+            "reason": step2_res["reason"]
+        })
+
+        await asyncio.sleep(1.5)
+
+        # Step 3: Threat / Error Auto-Veto (Lights up Red Alarm Strobe LED)
+        self._send_demo_step("HUMAN MISSION", "THREAT TRAP")
+        step3_res = await self.proxy.intercept_operation(
+            agent_id=agent_id,
+            session_id=session_id,
+            operation="read_file",
+            target_resource=".env.decoy",
+            parameters={"path": ".env.decoy"}
+        )
+        steps.append({
+            "step": 3,
+            "action": "Agent attempts unauthorized access to '.env.decoy' (Triggers Red Alarm LED)",
+            "decision": step3_res["decision"],
+            "status": step3_res["status"],
+            "hardware_feedback": "OLED AUTO-VETO + Red Alarm Strobe LED",
+            "reason": step3_res["reason"]
+        })
+
+        human_outcome = "APPROVED & EXECUTED" if step2_res["status"] == "EXECUTED" else "REJECTED BY HUMAN"
+        return {
+            "scenario": "LIVE HUMAN-CONTROL MISSION",
+            "outcome": f"HUMAN: {human_outcome} | THREAT: BLOCKED",
+            "enforcement_successful": (step1_res["decision"] == "ALLOW" and step3_res["decision"] == "VETO"),
+            "why_human_action_required": "HUMAN-IN-THE-LOOP SOVEREIGNTY: Routine reads run automatically, sensitive deployments pause until a physical human presses APPROVE or REJECT on hardware, and threats/errors trigger an immediate hardware Red Alarm Strobe.",
+            "steps": steps
+        }

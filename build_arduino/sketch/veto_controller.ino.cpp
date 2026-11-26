@@ -1,0 +1,752 @@
+#include <Arduino.h>
+#line 1 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+/**
+ * VETO Hardware Control Unit Firmware
+ * Platform: Arduino Uno R3 (ATmega328P)
+ * 
+ * Required Libraries:
+ * - Wire.h (Built-in Arduino I2C)
+ * - Adafruit_GFX.h
+ * - Adafruit_SSD1306.h
+ * 
+ * Exact Pin Mappings:
+ * - 0.96" I2C SSD1306 OLED (128x64, Address 0x3C):
+ *     SDA -> A4
+ *     SCL -> A5
+ * - Momentary Pushbuttons (wired to GND, INPUT_PULLUP active-LOW):
+ *     D2 -> APPROVE Button
+ *     D3 -> REJECT Button
+ *     D4 -> EMERGENCY STOP Button
+ * 
+ * (RGB LED is omitted per design specification - no LED pins or logic)
+ */
+
+#define SSD1306_NO_SPLASH
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH  128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define OLED_I2C_ADDR 0x3C
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Button Pin Definitions
+#define PIN_BTN_APPROVE 2
+#define PIN_BTN_REJECT  3
+#define PIN_BTN_ESTOP   4
+
+// Timing Constants (Non-blocking)
+#define DEBOUNCE_DELAY_MS 50
+#define HEARTBEAT_INTERVAL_MS 1000
+#define CONFIRMATION_TIMEOUT_MS 1500
+#define STATUS_TIMEOUT_MS 2000
+#define IDLE_ANIM_INTERVAL_MS 70
+
+// Debounce state tracking
+struct Button {
+  const uint8_t pin;
+  uint8_t debouncedState;
+  uint8_t lastReading;
+  unsigned long lastDebounceTime;
+};
+
+Button btnApprove = { PIN_BTN_APPROVE, HIGH, HIGH, 0 };
+Button btnReject  = { PIN_BTN_REJECT,  HIGH, HIGH, 0 };
+Button btnEstop   = { PIN_BTN_ESTOP,   HIGH, HIGH, 0 };
+
+// System States
+enum SystemState : uint8_t {
+  STATE_ARMED,
+  STATE_PENDING,
+  STATE_CONFIRM_APPROVED,
+  STATE_CONFIRM_REJECTED,
+  STATE_STATUS_BLOCKED,
+  STATE_STATUS_APPROVED,
+  STATE_HALTED
+};
+
+SystemState currentState = STATE_ARMED;
+
+// Request Data Buffers (compact to preserve SRAM for 1024-byte OLED framebuffer)
+char reqId[16]     = "";
+char reqAgent[16]  = "";
+char reqAction[22] = "";
+char reqRisk[10]   = "HIGH";
+
+// Timing Variables
+unsigned long lastHeartbeat = 0;
+unsigned long stateTimer    = 0;
+unsigned long lastAnimTime  = 0;
+uint8_t animStep            = 0;
+bool oledReady              = false;
+
+// Button test visual feedback variables
+uint8_t lastButtonPressed         = 0;
+unsigned long lastButtonPressTime = 0;
+
+// Serial RX Buffer (newline-delimited JSON commands)
+char serialRxBuf[96];
+uint8_t serialRxIdx = 0;
+
+// ============================================================================
+// Zero-Dependency Compact JSON Value Extractor
+// ============================================================================
+#line 95 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+bool extractJsonValue(const char* json, const char* key, char* dest, size_t maxLen);
+#line 126 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+bool checkButtonPress(Button &btn);
+#line 147 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void drawLeftHand(int x, int y);
+#line 163 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void drawRightHand(int x, int y);
+#line 179 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void playNokiaHandshakeAnimation();
+#line 255 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void updateOLED();
+#line 423 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void processHostJson(const char* json);
+#line 477 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void processIncomingCommand(char* cmd);
+#line 545 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void setup();
+#line 622 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+void loop();
+#line 95 "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller\\veto_controller.ino"
+bool extractJsonValue(const char* json, const char* key, char* dest, size_t maxLen) {
+  dest[0] = '\0';
+  char keyPattern[20];
+  snprintf(keyPattern, sizeof(keyPattern), "\"%s\"", key);
+  const char* p = strstr(json, keyPattern);
+  if (!p) return false;
+  p += strlen(keyPattern);
+
+  while (*p == ' ' || *p == ':') p++;
+  if (*p == '\"') {
+    p++;
+    size_t i = 0;
+    while (*p && *p != '\"' && i < maxLen - 1) {
+      if (*p == '\\' && *(p + 1)) p++;
+      dest[i++] = *p++;
+    }
+    dest[i] = '\0';
+    return true;
+  } else {
+    size_t i = 0;
+    while (*p && *p != ',' && *p != '}' && *p != ' ' && *p != '\r' && *p != '\n' && i < maxLen - 1) {
+      dest[i++] = *p++;
+    }
+    dest[i] = '\0';
+    return true;
+  }
+}
+
+// ============================================================================
+// Clean Software Debouncing & Edge Detection (Fires once per physical press)
+// ============================================================================
+bool checkButtonPress(Button &btn) {
+  uint8_t reading = digitalRead(btn.pin);
+  if (reading != btn.lastReading) {
+    btn.lastDebounceTime = millis();
+  }
+  btn.lastReading = reading;
+
+  if ((millis() - btn.lastDebounceTime) > DEBOUNCE_DELAY_MS) {
+    if (reading != btn.debouncedState) {
+      btn.debouncedState = reading;
+      if (btn.debouncedState == LOW) {
+        return true; // Active-LOW edge detected (button pressed)
+      }
+    }
+  }
+  return false;
+}
+
+// ============================================================================
+// Retro Nokia-Style "Connecting Hands / Security Handshake" Boot Animation
+// ============================================================================
+void drawLeftHand(int x, int y) {
+  // Forearm & wrist
+  display.fillRect(x, y + 2, 16, 7, SSD1306_WHITE);
+  display.fillRect(x + 16, y + 3, 4, 5, SSD1306_WHITE);
+  // Palm base
+  display.fillRect(x + 20, y + 1, 5, 8, SSD1306_WHITE);
+  // Upright thumb
+  display.drawLine(x + 21, y + 1, x + 25, y - 3, SSD1306_WHITE);
+  display.drawLine(x + 22, y + 1, x + 26, y - 3, SSD1306_WHITE);
+  // Reaching fingers
+  display.drawLine(x + 25, y + 2, x + 33, y + 2, SSD1306_WHITE);
+  display.drawLine(x + 25, y + 4, x + 35, y + 4, SSD1306_WHITE);
+  display.drawLine(x + 25, y + 6, x + 34, y + 6, SSD1306_WHITE);
+  display.drawLine(x + 25, y + 8, x + 31, y + 8, SSD1306_WHITE);
+}
+
+void drawRightHand(int x, int y) {
+  // Forearm & wrist
+  display.fillRect(x - 16, y + 2, 16, 7, SSD1306_WHITE);
+  display.fillRect(x - 20, y + 3, 4, 5, SSD1306_WHITE);
+  // Palm base
+  display.fillRect(x - 25, y + 1, 5, 8, SSD1306_WHITE);
+  // Upright thumb
+  display.drawLine(x - 21, y + 1, x - 25, y - 3, SSD1306_WHITE);
+  display.drawLine(x - 22, y + 1, x - 26, y - 3, SSD1306_WHITE);
+  // Reaching fingers
+  display.drawLine(x - 25, y + 2, x - 33, y + 2, SSD1306_WHITE);
+  display.drawLine(x - 25, y + 4, x - 35, y + 4, SSD1306_WHITE);
+  display.drawLine(x - 25, y + 6, x - 34, y + 6, SSD1306_WHITE);
+  display.drawLine(x - 25, y + 8, x - 31, y + 8, SSD1306_WHITE);
+}
+
+void playNokiaHandshakeAnimation() {
+  if (!oledReady) return;
+
+  const int totalFrames = 22;
+  const int yCenter = 22;
+
+  // Slide hands together from opposite edges
+  for (int f = 0; f <= totalFrames; f++) {
+    display.clearDisplay();
+
+    // Top Title
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(14, 2);
+    display.print(F("VETO RUNTIME GUARD"));
+    display.drawLine(0, 11, 127, 11, SSD1306_WHITE);
+
+    // Calculate hand positions
+    int leftX = map(f, 0, totalFrames, -30, 26);
+    int rightX = map(f, 0, totalFrames, 140, 84);
+
+    drawLeftHand(leftX, yCenter);
+    drawRightHand(rightX, yCenter);
+
+    // Subtle bottom progress dots
+    for (int d = 0; d < (f / 3); d++) {
+      display.drawPixel(40 + (d * 7), 58, SSD1306_WHITE);
+    }
+
+    display.display();
+    delay(45);
+  }
+
+  // Clasp & Security Burst effect in center
+  for (int burst = 0; burst < 3; burst++) {
+    display.clearDisplay();
+
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(14, 2);
+    display.print(F("VETO RUNTIME GUARD"));
+    display.drawLine(0, 11, 127, 11, SSD1306_WHITE);
+
+    drawLeftHand(26, yCenter);
+    drawRightHand(84, yCenter);
+
+    // Radiating energy burst lines
+    display.drawLine(55, 14, 51, 8, SSD1306_WHITE);
+    display.drawLine(65, 14, 69, 8, SSD1306_WHITE);
+    display.drawLine(44, 22, 38, 22, SSD1306_WHITE);
+    display.drawLine(76, 22, 82, 22, SSD1306_WHITE);
+    display.drawLine(55, 30, 51, 36, SSD1306_WHITE);
+    display.drawLine(65, 30, 69, 36, SSD1306_WHITE);
+
+    // Padlock icon locking the hands together
+    display.drawCircle(60, 20, 3, SSD1306_WHITE);
+    display.fillRect(56, 22, 9, 8, SSD1306_WHITE);
+    display.drawPixel(60, 25, SSD1306_BLACK);
+    display.drawPixel(60, 26, SSD1306_BLACK);
+
+    // Handshake Success Banner
+    display.setCursor(4, 44);
+    display.print(F("VETO // HANDSHAKE OK"));
+    display.setCursor(10, 54);
+    display.print(F("ZERO-TRUST SECURED"));
+
+    display.display();
+    delay(180);
+  }
+
+  delay(600); // Hold final handshake frame before entering idle monitoring
+}
+
+// ============================================================================
+// OLED UI Renderer
+// ============================================================================
+void updateOLED() {
+  if (!oledReady) return;
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  if (currentState == STATE_HALTED) {
+    // -------------------------------------------------------------
+    // EMERGENCY STOP / SYSTEM HALTED (Highest priority screen)
+    // -------------------------------------------------------------
+    bool flash = ((animStep / 4) % 2 == 0);
+    if (flash) {
+      display.fillRect(0, 0, 128, 16, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    } else {
+      display.setTextColor(SSD1306_WHITE);
+    }
+
+    display.setTextSize(1);
+    display.setCursor(8, 4);
+    display.print(F("! SYSTEM HALTED !"));
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setCursor(0, 20);
+    display.print(F("KILL SWITCH ENGAGED"));
+    display.setCursor(0, 31);
+    display.print(F("PIN D4: LOW (ACTIVE)"));
+    display.setCursor(0, 42);
+    display.print(F("ALL OPS SUSPENDED"));
+
+    display.drawLine(0, 52, 127, 52, SSD1306_WHITE);
+    display.setCursor(0, 56);
+    display.print(F("Host: send RESET json"));
+  }
+  else if (currentState == STATE_PENDING) {
+    // -------------------------------------------------------------
+    // APPROVAL PENDING SCREEN
+    // -------------------------------------------------------------
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print(F("! APPROVAL PENDING !"));
+    display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
+
+    display.setCursor(0, 12);
+    display.print(F("ID:  "));
+    display.print(reqId);
+
+    display.setCursor(0, 22);
+    display.print(F("AGT: "));
+    display.print(reqAgent);
+
+    display.setCursor(0, 32);
+    display.print(F("ACT: "));
+    display.print(reqAction);
+
+    display.setCursor(0, 42);
+    display.print(F("RSK: "));
+    display.print(reqRisk);
+
+    display.drawLine(0, 51, 127, 51, SSD1306_WHITE);
+
+    // Button Prompts (flashing highlight on D2/D3)
+    bool blink = ((animStep / 5) % 2 == 0);
+    if (blink) {
+      display.setCursor(2, 55);
+      display.print(F("[D2:APPROVE] [D3:REJECT]"));
+    } else {
+      display.setCursor(2, 55);
+      display.print(F(" D2:APPROVE   D3:REJECT "));
+    }
+  }
+  else if (currentState == STATE_CONFIRM_APPROVED || currentState == STATE_STATUS_APPROVED) {
+    // -------------------------------------------------------------
+    // APPROVED CONFIRMATION SCREEN
+    // -------------------------------------------------------------
+    display.fillRect(0, 8, 128, 24, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    display.setTextSize(2);
+    display.setCursor(16, 13);
+    display.print(F("APPROVED"));
+
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 38);
+    display.print(F("ID: "));
+    display.print(reqId);
+    display.setCursor(0, 49);
+    display.print(F("Action Authorized."));
+  }
+  else if (currentState == STATE_CONFIRM_REJECTED || currentState == STATE_STATUS_BLOCKED) {
+    // -------------------------------------------------------------
+    // VETOED / REJECTED CONFIRMATION SCREEN
+    // -------------------------------------------------------------
+    display.fillRect(0, 8, 128, 24, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+    display.setTextSize(2);
+    display.setCursor(14, 13);
+    display.print(F("VETOED!"));
+
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 38);
+    display.print(F("ID: "));
+    display.print(reqId);
+    display.setCursor(0, 49);
+    display.print(F("Operation Blocked."));
+  }
+  else {
+    // -------------------------------------------------------------
+    // IDLE "ARMED / MONITORING" SCREEN
+    // -------------------------------------------------------------
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print(F("VETO RUNTIME GUARD"));
+
+    // Mini shield icon in top right
+    display.drawRect(114, 0, 10, 8, SSD1306_WHITE);
+    display.drawPixel(114, 0, SSD1306_BLACK);
+    display.drawPixel(123, 0, SSD1306_BLACK);
+    display.drawPixel(114, 7, SSD1306_BLACK);
+    display.drawPixel(123, 7, SSD1306_BLACK);
+    if ((animStep / 6) % 2 == 0) {
+      display.drawPixel(118, 3, SSD1306_WHITE);
+      display.drawPixel(119, 3, SSD1306_WHITE);
+    }
+    display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
+
+    display.setCursor(0, 13);
+    display.print(F("STATUS: ARMED"));
+
+    display.setCursor(0, 24);
+    display.print(F("MODE:   ZERO-TRUST"));
+
+    display.setCursor(0, 35);
+    display.print(F("GATE:   INTERCEPTION"));
+
+    // Live moving heartbeat / EKG scanline
+    display.drawLine(0, 47, 127, 47, SSD1306_WHITE);
+    uint8_t pulseX = (animStep * 2) % 124;
+    if (pulseX > 6 && pulseX < 118) {
+      display.drawPixel(pulseX - 4, 46, SSD1306_WHITE);
+      display.drawPixel(pulseX - 3, 44, SSD1306_WHITE);
+      display.drawPixel(pulseX - 2, 50, SSD1306_WHITE);
+      display.drawPixel(pulseX - 1, 47, SSD1306_WHITE);
+      display.drawPixel(pulseX,     45, SSD1306_WHITE);
+      display.drawCircle(pulseX, 47, 2, SSD1306_WHITE);
+    }
+
+    display.setCursor(0, 54);
+    if (millis() - lastButtonPressTime < 1200) {
+      if (lastButtonPressed == PIN_BTN_APPROVE) {
+        display.print(F(">> D2 APPROVE: OK! <<"));
+      } else if (lastButtonPressed == PIN_BTN_REJECT) {
+        display.print(F(">> D3 REJECT:  OK! <<"));
+      } else {
+        display.print(F("D2:OK  D3:NO  D4:KILL"));
+      }
+    } else {
+      display.print(F("D2:OK  D3:NO  D4:KILL"));
+    }
+  }
+
+  display.display();
+}
+
+// ============================================================================
+// Process Incoming Host Commands (JSON Protocol + Legacy Fallback)
+// ============================================================================
+void processHostJson(const char* json) {
+  if (json[0] == '\0') return;
+
+  char cmdType[16] = "";
+  if (!extractJsonValue(json, "type", cmdType, sizeof(cmdType))) {
+    return;
+  }
+
+  // 1. Host Command: {"type":"REQUEST","id":"...","agent":"...","action":"...","risk":"..."}
+  if (strcmp(cmdType, "REQUEST") == 0) {
+    if (currentState != STATE_HALTED) {
+      extractJsonValue(json, "id", reqId, sizeof(reqId));
+      extractJsonValue(json, "agent", reqAgent, sizeof(reqAgent));
+      extractJsonValue(json, "action", reqAction, sizeof(reqAction));
+      extractJsonValue(json, "risk", reqRisk, sizeof(reqRisk));
+
+      currentState = STATE_PENDING;
+      updateOLED();
+    }
+  }
+  // 2. Host Command: {"type":"STATUS","state":"IDLE"|"BLOCKED"|"APPROVED"}
+  else if (strcmp(cmdType, "STATUS") == 0) {
+    char stateVal[16] = "";
+    extractJsonValue(json, "state", stateVal, sizeof(stateVal));
+
+    if (strcmp(stateVal, "IDLE") == 0) {
+      if (currentState != STATE_HALTED) {
+        currentState = STATE_ARMED;
+        updateOLED();
+      }
+    }
+    else if (strcmp(stateVal, "BLOCKED") == 0) {
+      if (currentState != STATE_HALTED) {
+        currentState = STATE_STATUS_BLOCKED;
+        stateTimer = millis();
+        updateOLED();
+      }
+    }
+    else if (strcmp(stateVal, "APPROVED") == 0) {
+      if (currentState != STATE_HALTED) {
+        currentState = STATE_STATUS_APPROVED;
+        stateTimer = millis();
+        updateOLED();
+      }
+    }
+  }
+  // 3. Host Command: {"type":"RESET"}
+  else if (strcmp(cmdType, "RESET") == 0) {
+    currentState = STATE_ARMED;
+    reqId[0] = '\0';
+    updateOLED();
+  }
+}
+
+void processIncomingCommand(char* cmd) {
+  if (cmd[0] == '\0') return;
+
+  // JSON protocol handler (primary)
+  if (cmd[0] == '{') {
+    processHostJson(cmd);
+    return;
+  }
+
+  // Optional legacy text protocol adapters
+  if (strncmp(cmd, "PENDING:", 8) == 0) {
+    if (currentState != STATE_HALTED) {
+      char* id = cmd + 8;
+      char* op = strchr(id, ':');
+      char* tgt = NULL;
+      char* why = NULL;
+      if (op) {
+        *op = '\0'; op++;
+        tgt = strchr(op, ':');
+        if (tgt) {
+          *tgt = '\0'; tgt++;
+          why = strchr(tgt, ':');
+          if (why) { *why = '\0'; why++; }
+        }
+      }
+      strncpy(reqId, id, sizeof(reqId) - 1);
+      strncpy(reqAgent, op ? op : "AGENT", sizeof(reqAgent) - 1);
+      strncpy(reqAction, tgt ? tgt : "ACTION", sizeof(reqAction) - 1);
+      strncpy(reqRisk, why ? why : "HIGH", sizeof(reqRisk) - 1);
+
+      currentState = STATE_PENDING;
+      updateOLED();
+    }
+  }
+  else if (strncmp(cmd, "DECISION:", 9) == 0) {
+    char* id = cmd + 9;
+    char* dec = strchr(id, ':');
+    if (dec) {
+      dec++;
+      if (strcmp(dec, "APPROVED") == 0) {
+        currentState = STATE_CONFIRM_APPROVED;
+      } else {
+        currentState = STATE_CONFIRM_REJECTED;
+      }
+      stateTimer = millis();
+      updateOLED();
+    }
+  }
+  else if (strncmp(cmd, "VETO:", 5) == 0) {
+    currentState = STATE_STATUS_BLOCKED;
+    stateTimer = millis();
+    updateOLED();
+  }
+  else if (strcmp(cmd, "RESET") == 0 || strcmp(cmd, "ESTOP_RESET") == 0) {
+    currentState = STATE_ARMED;
+    reqId[0] = '\0';
+    updateOLED();
+  }
+  else if (strncmp(cmd, "PING:", 5) == 0) {
+    Serial.print(F("{\"type\":\"PONG\",\"nonce\":\""));
+    Serial.print(cmd + 5);
+    Serial.println(F("\"}"));
+  }
+}
+
+// ============================================================================
+// Arduino Setup
+// ============================================================================
+void setup() {
+  Serial.begin(115200);
+
+  // Configure pushbuttons with internal pullups (active-LOW)
+  pinMode(PIN_BTN_APPROVE, INPUT_PULLUP);
+  pinMode(PIN_BTN_REJECT,  INPUT_PULLUP);
+  pinMode(PIN_BTN_ESTOP,   INPUT_PULLUP);
+
+  Wire.begin();
+  Wire.setClock(100000); // Standard 100kHz I2C clock (maximizes signal reliability with jumper wires)
+  delay(150);
+
+  // Diagnostic I2C Scanner
+  uint8_t i2cDevices[8];
+  uint8_t devCount = 0;
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      if (devCount < 8) {
+        i2cDevices[devCount++] = address;
+      }
+    }
+  }
+
+  // Report detected I2C devices to host
+  Serial.print(F("{\"type\":\"I2C_SCAN\",\"count\":"));
+  Serial.print(devCount);
+  Serial.print(F(",\"devices\":["));
+  for (uint8_t i = 0; i < devCount; i++) {
+    if (i > 0) Serial.print(F(","));
+    Serial.print(F("\"0x"));
+    if (i2cDevices[i] < 16) Serial.print('0');
+    Serial.print(i2cDevices[i], HEX);
+    Serial.print(F("\""));
+  }
+  Serial.println(F("]}"));
+
+  // Auto-detect and initialize SSD1306 OLED (check 0x3C, then 0x3D)
+  uint8_t activeAddr = 0;
+  if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    activeAddr = 0x3C;
+    oledReady = true;
+  } else if (display.begin(SSD1306_SWITCHCAPVCC, 0x3D)) {
+    activeAddr = 0x3D;
+    oledReady = true;
+  } else {
+    oledReady = false;
+  }
+
+  if (oledReady) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(0xFF);
+    display.dim(false);
+
+    Serial.print(F("{\"type\":\"OLED_INIT\",\"status\":\"OK\",\"addr\":\"0x"));
+    if (activeAddr < 16) Serial.print('0');
+    Serial.print(activeAddr, HEX);
+    Serial.println(F("\"}"));
+
+    // Play retro Nokia connecting hands boot animation
+    playNokiaHandshakeAnimation();
+  } else {
+    Serial.println(F("{\"type\":\"OLED_INIT\",\"status\":\"FAILED\",\"error\":\"NO_I2C_RESPONSE\"}"));
+  }
+
+  currentState = STATE_ARMED;
+  updateOLED();
+
+  // Initial heartbeat
+  Serial.println(F("{\"type\":\"HEARTBEAT\",\"status\":\"ARMED\"}"));
+  lastHeartbeat = millis();
+}
+
+// ============================================================================
+// Main Non-blocking Execution Loop
+// ============================================================================
+void loop() {
+  unsigned long now = millis();
+
+  // -------------------------------------------------------------
+  // 1. Button Press Checks
+  // -------------------------------------------------------------
+
+  // D4: Emergency Stop (Highest priority at ANY time)
+  if (checkButtonPress(btnEstop)) {
+    currentState = STATE_HALTED;
+    Serial.println(F("{\"type\":\"EMERGENCY_STOP\",\"reason\":\"HARDWARE_KILL_SWITCH\"}"));
+    updateOLED();
+  }
+
+  // D2: Approve Button
+  if (checkButtonPress(btnApprove)) {
+    if (currentState == STATE_PENDING) {
+      Serial.print(F("{\"type\":\"DECISION\",\"id\":\""));
+      Serial.print(reqId);
+      Serial.println(F("\",\"decision\":\"APPROVE\"}"));
+
+      currentState = STATE_CONFIRM_APPROVED;
+      stateTimer = now;
+      updateOLED();
+    } else {
+      // In ARMED or idle mode, provide instant tactile confirmation
+      lastButtonPressed = PIN_BTN_APPROVE;
+      lastButtonPressTime = now;
+      Serial.println(F("{\"type\":\"BUTTON_TEST\",\"button\":\"APPROVE\",\"pin\":2,\"state\":\"PRESSED\",\"status\":\"OK\"}"));
+      updateOLED();
+    }
+  }
+
+  // D3: Reject Button
+  if (checkButtonPress(btnReject)) {
+    if (currentState == STATE_PENDING) {
+      Serial.print(F("{\"type\":\"DECISION\",\"id\":\""));
+      Serial.print(reqId);
+      Serial.println(F("\",\"decision\":\"REJECT\"}"));
+
+      currentState = STATE_CONFIRM_REJECTED;
+      stateTimer = now;
+      updateOLED();
+    } else {
+      // In ARMED or idle mode, provide instant tactile confirmation
+      lastButtonPressed = PIN_BTN_REJECT;
+      lastButtonPressTime = now;
+      Serial.println(F("{\"type\":\"BUTTON_TEST\",\"button\":\"REJECT\",\"pin\":3,\"state\":\"PRESSED\",\"status\":\"OK\"}"));
+      updateOLED();
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 2. Non-blocking Serial Reading for Host JSON Commands
+  // -------------------------------------------------------------
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialRxIdx > 0) {
+        serialRxBuf[serialRxIdx] = '\0';
+        processIncomingCommand(serialRxBuf);
+        serialRxIdx = 0;
+      }
+    } else if (serialRxIdx < sizeof(serialRxBuf) - 1) {
+      serialRxBuf[serialRxIdx++] = c;
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 3. Periodic JSON Heartbeat (Every 1000ms)
+  // -------------------------------------------------------------
+  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+    lastHeartbeat = now;
+    Serial.print(F("{\"type\":\"HEARTBEAT\",\"status\":\""));
+    Serial.print(currentState == STATE_HALTED ? F("HALTED") : F("ARMED"));
+    Serial.println(F("\"}"));
+  }
+
+  // -------------------------------------------------------------
+  // 4. Timed Confirmation & Status Displays (Auto-revert to ARMED)
+  // -------------------------------------------------------------
+  if (currentState == STATE_CONFIRM_APPROVED || currentState == STATE_CONFIRM_REJECTED) {
+    if (now - stateTimer >= CONFIRMATION_TIMEOUT_MS) {
+      currentState = STATE_ARMED;
+      reqId[0] = '\0';
+      updateOLED();
+    }
+  }
+  else if (currentState == STATE_STATUS_BLOCKED || currentState == STATE_STATUS_APPROVED) {
+    if (now - stateTimer >= STATUS_TIMEOUT_MS) {
+      currentState = STATE_ARMED;
+      updateOLED();
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 5. Non-blocking Animation Frame Update (~14 FPS)
+  // -------------------------------------------------------------
+  if (now - lastAnimTime >= IDLE_ANIM_INTERVAL_MS) {
+    lastAnimTime = now;
+    animStep++;
+    // Only repaint screen when in animated states
+    if (currentState == STATE_ARMED || currentState == STATE_PENDING || currentState == STATE_HALTED) {
+      updateOLED();
+    }
+  }
+}
+

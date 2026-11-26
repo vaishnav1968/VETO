@@ -338,6 +338,8 @@ async def run_demo_scenario(scenario: str, simulate_rejection: bool = True, simu
         res = await runner.run_scenario_6()
     elif scenario in ("authorized-approval", "approval", "approve", "7"):
         res = await runner.run_scenario_7(auto_simulate_approval=simulate_approval)
+    elif scenario in ("human-mission", "live-human", "8"):
+        res = await runner.run_human_control_mission()
     else:
         raise HTTPException(status_code=404, detail="Unknown demonstration scenario")
     

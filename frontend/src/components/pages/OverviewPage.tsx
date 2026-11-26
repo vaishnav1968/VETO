@@ -142,8 +142,15 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
 
           {/* Quick Demo Launchers */}
           <div className="mt-5 pt-4 border-t border-[#1e2923]">
-            <div className="text-[11px] font-mono uppercase text-neutral-400 mb-2">One-Click Demonstration Scenarios</div>
+            <div className="text-[11px] font-mono uppercase text-neutral-400 mb-2">Human-in-the-Loop &amp; Demonstration Scenarios</div>
             <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => onTriggerDemo('human-mission')}
+                className="px-3.5 py-1.5 bg-amber-950/80 border border-amber-500 text-amber-200 hover:bg-amber-900 text-xs font-mono flex items-center space-x-1.5 transition-colors font-bold"
+              >
+                <Play size={12} />
+                <span>LIVE: Human-Control Mission (Press Arduino Switch)</span>
+              </button>
               <button
                 onClick={() => onTriggerDemo('prompt-injection')}
                 className="px-3 py-1.5 bg-[#16201a] border border-emerald-800/80 text-emerald-300 hover:bg-emerald-950 text-xs font-mono flex items-center space-x-1.5 transition-colors"

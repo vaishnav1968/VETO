@@ -38,6 +38,70 @@ export const DemoScenariosPage: React.FC<DemoScenariosPageProps> = ({ onRefresh 
       </div>
 
       <div className="grid grid-cols-1 gap-6">
+        {/* FEATURED: Live Human-Control Mission */}
+        <div className="bg-[#141711] border-2 border-amber-500/70 p-5 space-y-4 font-mono text-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-amber-900/50 gap-2">
+            <div>
+              <div className="text-[10px] text-amber-400 uppercase font-bold tracking-wider">Featured Live Mission • Physical Hardware Control</div>
+              <h2 className="text-sm font-bold text-neutral-100 flex items-center space-x-2">
+                <Cpu size={15} className="text-amber-400" />
+                <span>Live Human-Control Mission (Arduino Switch = Authority)</span>
+              </h2>
+            </div>
+            <button
+              onClick={() => handleRun('human-mission')}
+              disabled={runningDemo === 'human-mission'}
+              className="px-4 py-2 bg-amber-950 border border-amber-500 text-amber-200 hover:bg-amber-900 font-bold flex items-center space-x-1.5 transition-colors"
+            >
+              <Play size={14} />
+              <span>{runningDemo === 'human-mission' ? 'Waiting for Your Switch...' : 'Start Live Human Mission'}</span>
+            </button>
+          </div>
+
+          <p className="text-neutral-300 text-xs">
+            Runs a real 3-step DevOps agent workflow: (1) safe file read (<code className="text-emerald-400">ALLOW</code>), (2) sensitive deployment of <code className="text-neutral-100">production_release.json</code> which <strong className="text-amber-300">PAUSES indefinitely until YOU press Pin 2 (APPROVE) or Pin 3 (REJECT)</strong> on your Arduino, and (3) a honeytoken trap (<code className="text-red-400">AUTO-VETO</code>) that lights up the <strong className="text-red-400">Red Alarm Strobe LED</strong>.
+          </p>
+
+          {runningDemo === 'human-mission' && (
+            <div className="p-3 bg-amber-950/60 border border-amber-500 text-amber-200 animate-pulse flex items-center space-x-2">
+              <Cpu size={16} className="text-amber-400 shrink-0" />
+              <span>
+                <strong>AWAITING HUMAN CONTROL:</strong> Check your Arduino OLED! Press <strong>Pin 2 (APPROVE)</strong> or <strong>Pin 3 (REJECT)</strong> (or resolve in Approval Center).
+              </span>
+            </div>
+          )}
+
+          {demoResults['human-mission'] && (
+            <div className="p-4 bg-[#0a0d0c] border border-amber-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-400">LIVE MISSION RESULT:</span>
+                <span className="px-2 py-0.5 bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold">
+                  {demoResults['human-mission'].outcome}
+                </span>
+              </div>
+              <div className="space-y-2 pt-1">
+                {demoResults['human-mission'].steps.map((s) => (
+                  <div key={s.step} className="p-2.5 bg-[#111714] border border-[#1e2923] flex items-start space-x-2">
+                    <span className="text-neutral-500 font-bold">Step {s.step}:</span>
+                    <div className="flex-1 space-y-1">
+                      <div className="text-neutral-200">{s.action}</div>
+                      {s.hardware_feedback && (
+                        <div className="text-amber-400 text-[11px] font-semibold">Hardware: {s.hardware_feedback}</div>
+                      )}
+                      {s.decision && (
+                        <div className="flex items-center space-x-2 mt-1">
+                          <StatusBadge type="decision" value={s.decision} />
+                          <span className="text-neutral-400 text-[11px]">{s.reason}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Scenario 1: Prompt Injection & Honeytokens */}
         <div className="bg-[#111714] border border-[#1e2923] p-5 space-y-4 font-mono text-xs">
           <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-[#1e2923] gap-2">

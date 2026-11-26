@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "",
+  "compiler.optimization_flags": "",
+  "customBuildProperties": "",
+  "fqbn": "arduino:avr:uno",
+  "hardwareFolders": "C:\\Users\\vaish\\AppData\\Local\\Arduino15\\packages\\arduino\\hardware\\avr\\1.8.8,C:\\Users\\vaish\\AppData\\Local\\Arduino15\\packages\\arduino\\hardware\\avr\\1.8.8",
+  "otherLibrariesFolders": "C:\\Users\\vaish\\OneDrive\\Documents\\Arduino\\libraries",
+  "sketchLocation": "C:\\Users\\vaish\\VETO-ait\\firmware\\veto_controller"
+}
