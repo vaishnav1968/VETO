@@ -101,34 +101,27 @@ void setLEDColor(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 void updateLED() {
+  // Single LED connected to D9 (PWM)
   if (currentState == STATE_VETO_ALERT || currentState == STATE_EMERGENCY_STOP) {
-    // Urgent Red alarm strobe on errors, threats, vetoes, and E-Stop
-    if ((animStep / 3) % 2 == 0) {
-      setLEDColor(255, 0, 0);
-    } else {
-      setLEDColor(20, 0, 0);
-    }
+    // Urgent fast alarm strobe on D9 for errors, vetoes, and E-Stop
+    analogWrite(PIN_LED_RED, ((animStep / 2) % 2 == 0) ? 255 : 0);
   }
   else if (currentState == STATE_PENDING_APPROVAL) {
-    // Pulsing Amber/Yellow demanding physical human switch control
-    if ((animStep / 4) % 2 == 0) {
-      setLEDColor(255, 180, 0);
-    } else {
-      setLEDColor(80, 45, 0);
-    }
+    // Steady attention blink (~1 Hz) demanding physical human switch control
+    analogWrite(PIN_LED_RED, ((animStep / 6) % 2 == 0) ? 255 : 20);
   }
   else if (currentState == STATE_DECISION_FEEDBACK) {
     if (strcmp(lastDecisionText, "APPROVED") == 0) {
-      setLEDColor(0, 255, 0);
+      analogWrite(PIN_LED_RED, 255); // Solid bright confirmation
     } else {
-      setLEDColor(255, 0, 0);
+      analogWrite(PIN_LED_RED, ((animStep / 2) % 2 == 0) ? 255 : 0); // Fast reject flash
     }
   }
   else if (currentState == STATE_DEMO_ALERT) {
-    setLEDColor(0, 180, 255);
+    analogWrite(PIN_LED_RED, 140); // Medium glow during demo step
   }
   else {
-    setLEDColor(0, 180, 0);
+    analogWrite(PIN_LED_RED, 0); // Normal/safe: LED off
   }
 }
 
